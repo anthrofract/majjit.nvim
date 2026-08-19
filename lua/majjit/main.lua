@@ -4,343 +4,243 @@ local ansi = require("baleia").setup({
   async = false,
   name = "MajjitAnsi",
 })
-local HEADER_LINE_COUNT = 2
-local FOLD_MARKER_WIDTH = #"▸"
-local buffer
+local active_session
 local command_catalog = require("majjit.commands.catalog")
-local command_output
-local command_prompt
-local command_session
 local command_tree = require("majjit.commands.tree").compile(command_catalog)
-local commands = require("majjit.commands.session")
-local directory
-local jump = require("majjit.jump")
+local commands_module = require("majjit.commands.session")
 local jj = require("majjit.jj")
+local jump = require("majjit.jump")
 local log = require("majjit.log")
-local ignore_immutable = false
-local active_mutation
-local mutate
-local namespace = vim.api.nvim_create_namespace("majjit")
+local operation_module = require("majjit.operation")
 local output_module = require("majjit.commands.output")
 local prompt_module = require("majjit.commands.prompt")
 local repository = require("majjit.repository")
-local run_read
-local state
-local user_window
+local view_module = require("majjit.view")
 
-vim.api.nvim_set_hl(0, "MajjitDiffChange", {
-  bold = true,
-  default = true,
-})
+local function mutation_error(result)
+  local message = result.error
+  if not message or message == "" then
+    message = result.stderr
+  end
+  if not message or message == "" then
+    message = "jj exited with code " .. tostring(result.code)
+  end
+  return message
+end
 
-local function get_window()
-  if not buffer or not vim.api.nvim_buf_is_valid(buffer) then
+local function start_operation(session, fn, callback)
+  if session.closed then
     return
   end
-  local current = vim.api.nvim_get_current_win()
-  if vim.api.nvim_win_get_buf(current) == buffer then
-    return current
-  end
-  return vim.fn.win_findbuf(buffer)[1]
-end
-
-local function get_context()
-  local context = {
-    buffer = buffer,
-    capabilities = {
-      repository = state ~= nil,
-    },
-    root = state and state.root,
-    state = state,
-    window = get_window(),
-  }
-  if not state or not context.window then
-    return context
-  end
-
-  local cursor = vim.api.nvim_win_get_cursor(context.window)
-  context.entry = log.entry_at_line(state.log, cursor[1] - HEADER_LINE_COUNT)
-  context.commit = log.commit_for_entry(state.log, context.entry)
-  context.file = log.file_for_entry(state.log, context.entry)
-  context.capabilities.commit = context.commit ~= nil
-  context.capabilities.file = context.file ~= nil
-  context.capabilities.foldable = context.entry ~= nil
-    and (context.entry.kind == "commit" or context.entry.kind == "file" or context.entry.kind == "hunk")
-  context.capabilities.working_copy = context.commit ~= nil and context.commit.current_working_copy
-  return context
-end
-
-local function set_lines(target, lines)
-  vim.bo[target].modifiable = true
-  vim.api.nvim_buf_set_lines(target, 0, -1, false, lines)
-  vim.api.nvim_buf_clear_namespace(target, namespace, 0, -1)
-  ansi.once(target)
-  vim.bo[target].modifiable = false
-end
-
-local function highlight_header(target, root, revset)
-  local repository_label = "repository: "
-  local revset_label = "  revset: "
-  local root_start = #repository_label
-  local revset_label_start = root_start + #root
-  local revset_start = revset_label_start + #revset_label
-
-  vim.api.nvim_buf_set_extmark(target, namespace, 0, 0, {
-    end_col = root_start,
-    hl_group = "Label",
-  })
-  vim.api.nvim_buf_set_extmark(target, namespace, 0, root_start, {
-    end_col = revset_label_start,
-    hl_group = "String",
-  })
-  vim.api.nvim_buf_set_extmark(target, namespace, 0, revset_label_start, {
-    end_col = revset_start,
-    hl_group = "Label",
-  })
-  vim.api.nvim_buf_set_extmark(target, namespace, 0, revset_start, {
-    end_col = revset_start + #revset,
-    hl_group = "String",
-  })
-  if ignore_immutable then
-    local option_start = revset_start + #revset + 2
-    vim.api.nvim_buf_set_extmark(target, namespace, 0, option_start, {
-      end_col = option_start + #"--ignore-immutable",
-      hl_group = "DiagnosticError",
-    })
-  end
-end
-
-local function highlight_log(target, revision_log)
-  for _, entry in ipairs(revision_log.entries) do
-    if entry.kind == "commit" or entry.kind == "file" or entry.kind == "hunk" then
-      local row = entry.line + HEADER_LINE_COUNT - 1
-      vim.api.nvim_buf_set_extmark(target, namespace, row, entry.fold_column, {
-        end_col = entry.fold_column + FOLD_MARKER_WIDTH,
-        hl_group = "Comment",
-      })
-
-      if entry.kind == "file" then
-        vim.api.nvim_buf_set_extmark(target, namespace, row, entry.content_column, {
-          end_col = #entry.lines[1],
-          hl_group = "Directory",
-        })
-      end
-    elseif entry.kind == "diff_line" and entry.changed then
-      local row = entry.line + HEADER_LINE_COUNT - 1
-      vim.api.nvim_buf_set_extmark(target, namespace, row, entry.content_column, {
-        end_col = #entry.lines[1],
-        hl_group = "MajjitDiffChange",
-        hl_mode = "combine",
-      })
-    end
-  end
-end
-
-local function capture_selection(target)
-  if not state then
-    return nil, nil
-  end
-
-  local windows = vim.fn.win_findbuf(target)
-  if not windows[1] then
-    return nil, nil
-  end
-
-  local window = windows[1]
-  local cursor = vim.api.nvim_win_get_cursor(window)
-  local selection = {
-    column = cursor[2],
-    row = cursor[1],
-  }
-  local entry, offset = log.entry_at_line(state.log, cursor[1] - HEADER_LINE_COUNT)
-  if entry and entry.kind == "commit" then
-    selection.change_id = entry.change_id
-    selection.offset = offset
-  elseif entry and entry.kind == "file" then
-    selection.change_id = entry.change_id
-    selection.path = entry.path
-  elseif entry and entry.kind == "hunk" then
-    selection.change_id = entry.change_id
-    selection.hunk_index = entry.index
-    selection.path = entry.path
-  elseif entry and entry.kind == "diff_line" then
-    selection.change_id = entry.change_id
-    selection.hunk_index = entry.hunk_index
-    selection.line_index = entry.index
-    selection.path = entry.path
-  end
-
-  local view = vim.api.nvim_win_call(window, vim.fn.winsaveview)
-  return selection, view
-end
-
-local function restore_selection(target, next_state, selection, view)
-  local windows = vim.fn.win_findbuf(target)
-  if not windows[1] then
+  if session.operation then
+    vim.notify("A repository operation is already running", vim.log.levels.WARN, { title = "Majjit" })
     return
   end
 
-  local row
-  if selection and selection.change_id then
-    local commit = log.find_commit(next_state.log, selection.change_id)
-    if commit then
-      local file = selection.path and log.find_file(next_state.log, selection.change_id, selection.path)
-      if not file then
-        row = commit.line + math.min(selection.offset or 0, #commit.lines - 1) + HEADER_LINE_COUNT
-      elseif selection.hunk_index then
-        local hunk = log.find_hunk(next_state.log, selection.change_id, selection.path, selection.hunk_index)
-        local diff_line = selection.line_index
-          and log.find_diff_line(
-            next_state.log,
-            selection.change_id,
-            selection.path,
-            selection.hunk_index,
-            selection.line_index
-          )
-        row = (diff_line and diff_line.line or hunk and hunk.line or file.line) + HEADER_LINE_COUNT
-      else
-        row = file.line + HEADER_LINE_COUNT
-      end
+  local operation
+  local completed = false
+  operation = operation_module.new(fn, function(value, err)
+    completed = true
+    if session.operation == operation then
+      session.operation = nil
     end
-  elseif selection then
-    row = selection.row
+    if not session.closed then
+      callback(value, err)
+    end
+  end)
+  operation.on_cancel = function()
+    if session.operation == operation then
+      session.operation = nil
+    end
   end
-  row = row or (next_state.log.current_line and next_state.log.current_line + HEADER_LINE_COUNT)
-  row = math.max(1, math.min(row or 1, vim.api.nvim_buf_line_count(target)))
-
-  local line = vim.api.nvim_buf_get_lines(target, row - 1, row, false)[1]
-  local column = math.min(selection and selection.column or 0, #line)
-  local window = windows[1]
-  if view then
-    view.lnum = row
-    view.col = column
-    vim.api.nvim_win_call(window, function()
-      vim.fn.winrestview(view)
-    end)
+  if not completed and not operation.cancelled then
+    session.operation = operation
   end
-  vim.api.nvim_win_set_cursor(window, { row, column })
+  return operation
 end
 
-local function render(target, next_state, selection, view)
-  if not selection and not view then
-    selection, view = capture_selection(target)
+local function command_succeeded(result)
+  return not result.error and result.code == 0
+end
+
+local function run_command(session, operation, root, command, show_output)
+  if not session.output:has_output() then
+    session.output:start_sequence(show_output)
+  elseif show_output then
+    session.output:show()
   end
-  local lines = {
-    "repository: "
-      .. next_state.root
-      .. "  revset: "
-      .. next_state.revset
-      .. (ignore_immutable and "  --ignore-immutable" or ""),
-    "",
-  }
-  vim.list_extend(lines, next_state.log.lines)
-  set_lines(target, lines)
-  highlight_header(target, next_state.root, next_state.revset)
-  highlight_log(target, next_state.log)
-  restore_selection(target, next_state, selection, view)
-  state = next_state
-  if command_session then
-    command_session:update_help()
+  session.output:start_command(command, show_output)
+  if session.commands then
+    session.commands:update_mappings()
+  end
+  local result = operation:await(function(callback)
+    return jj.run_mutation(root, command, callback)
+  end)
+  session.output:finish_command(result)
+  return result
+end
+
+local function repair_workspace(session, operation, root, show_output)
+  return run_command(session, operation, root, jj.workspace_update_stale(), show_output)
+end
+
+local function load_repository(session, operation, root, show_recovery, allow_recovery)
+  local next_state, err = repository.load(operation, root)
+  if not err or allow_recovery == false or not jj.is_stale_error(err) then
+    return next_state, err
+  end
+
+  local result = repair_workspace(session, operation, root, show_recovery)
+  if not command_succeeded(result) then
+    return nil, mutation_error(result)
+  end
+  return repository.load(operation, root)
+end
+
+local function show_load_error(session, err)
+  if session.view.state then
+    vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
+  else
+    local lines = vim.split(err, "\n", { plain = true })
+    lines[1] = "Error: " .. lines[1]
+    session.view:set_lines(lines)
   end
 end
 
-local function load(target, selection, allow_recovery, on_complete)
-  local root = state and state.root or directory
-  run_read(root, function(callback)
-    repository.load(root, callback)
+local function load(session, selection)
+  local root = session.view.state and session.view.state.root or session.directory
+  local target = session.view.buffer
+  return start_operation(session, function(operation)
+    return load_repository(session, operation, root, true, true)
   end, function(next_state, err)
-    if target ~= buffer or not vim.api.nvim_buf_is_valid(target) then
+    if target ~= session.view.buffer or not vim.api.nvim_buf_is_valid(target) then
       return
     end
-
     if err then
-      if state then
-        vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
-      else
-        local lines = vim.split(err, "\n", { plain = true })
-        lines[1] = "Error: " .. lines[1]
-        set_lines(target, lines)
-      end
-      if on_complete then
-        on_complete(err)
-      end
+      show_load_error(session, err)
       return
     end
-
-    render(target, next_state, selection)
-    if on_complete then
-      on_complete(nil)
+    session.view:render(next_state, selection)
+    if session.commands then
+      session.commands:update_help()
     end
-  end, {
-    allow_recovery = allow_recovery,
-    refresh_after_recovery = false,
-  })
+  end)
 end
 
-local function refresh()
-  if not active_mutation and buffer and vim.api.nvim_buf_is_valid(buffer) then
-    load(buffer)
+local function refresh(session)
+  if not session.operation and vim.api.nvim_buf_is_valid(session.view.buffer) then
+    load(session)
   end
 end
 
-local function toggle_fold(window)
-  if active_mutation or not buffer or not vim.api.nvim_buf_is_valid(buffer) or not state then
+local function resolve_entry(repository_state, intent)
+  if intent.kind == "commit" then
+    return log.find_commit(repository_state.log, intent.change_id)
+  end
+  return log.find_file(repository_state.log, intent.change_id, intent.path)
+end
+
+local function load_children(operation, repository_state, entry)
+  if entry.kind == "commit" then
+    return repository.load_files(operation, repository_state.root, entry)
+  end
+  return repository.load_hunks(operation, repository_state.root, entry)
+end
+
+local function toggle_fold(session, window)
+  local state = session.view.state
+  local buffer = session.view.buffer
+  if session.operation or not vim.api.nvim_buf_is_valid(buffer) or not state then
     return
   end
 
-  local cursor = vim.api.nvim_win_get_cursor(window or 0)
-  local entry = log.entry_at_line(state.log, cursor[1] - HEADER_LINE_COUNT)
+  local entry = session.view:entry_at_cursor(window or 0)
   if not entry or entry.kind == "diff_line" or entry.kind == "text" then
     return
   end
 
-  if entry.kind == "hunk" then
-    local selection, view = capture_selection(buffer)
+  if entry.kind == "hunk" or entry.loaded then
+    local selection, saved_view = session.view:capture_selection()
     entry.expanded = not entry.expanded
     log.flatten(state.log)
-    render(buffer, state, selection, view)
+    session.view:render(state, selection, saved_view)
+    if session.commands then
+      session.commands:update_help()
+    end
     return
   end
 
-  if entry.loaded then
-    local selection, view = capture_selection(buffer)
-    entry.expanded = not entry.expanded
-    log.flatten(state.log)
-    render(buffer, state, selection, view)
-    return
-  end
-
-  local target = buffer
-  local current_state = state
-  local load_children = entry.kind == "commit" and repository.load_files or repository.load_hunks
-  run_read(state.root, function(callback)
-    load_children(state.root, entry, callback)
-  end, function(children, err, recovered)
-    if target ~= buffer or current_state ~= state or not vim.api.nvim_buf_is_valid(target) then
+  local selection, saved_view = session.view:capture_selection()
+  local intent = {
+    change_id = entry.change_id,
+    kind = entry.kind,
+    path = entry.path,
+  }
+  local initial_state = state
+  start_operation(session, function(operation)
+    local working_state = initial_state
+    local working_entry = entry
+    local recovered = false
+    local children, err = load_children(operation, working_state, working_entry)
+    if err and jj.is_stale_error(err) then
+      local recovery = repair_workspace(session, operation, working_state.root, true)
+      if not command_succeeded(recovery) then
+        return nil, mutation_error(recovery)
+      end
+      working_state, err = repository.load(operation, working_state.root)
+      if err then
+        return nil, err
+      end
+      recovered = true
+      working_entry = resolve_entry(working_state, intent)
+      if not working_entry then
+        return { state = working_state }, "Selection no longer exists after recovering the workspace"
+      end
+      children, err = load_children(operation, working_state, working_entry)
+    end
+    if err then
+      return { state = recovered and working_state or nil }, err
+    end
+    return {
+      children = children,
+      entry = working_entry,
+      recovered = recovered,
+      state = working_state,
+    }
+  end, function(result, err)
+    if not vim.api.nvim_buf_is_valid(buffer) then
       return
     end
     if err then
+      if result and result.state then
+        session.view:render(result.state, selection, saved_view)
+        if session.commands then
+          session.commands:update_help()
+        end
+      end
       vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
       return
     end
-    if recovered then
-      return
-    end
-
-    local selection, view = capture_selection(target)
-    entry.expanded = true
-    entry.loaded = true
-    if entry.kind == "commit" then
-      entry.files = children
+    result.entry.expanded = true
+    result.entry.loaded = true
+    if result.entry.kind == "commit" then
+      result.entry.files = result.children
     else
-      entry.hunks = children
+      result.entry.hunks = result.children
     end
-    log.flatten(state.log)
-    render(target, state, selection, view)
+    log.flatten(result.state.log)
+    if not result.recovered then
+      selection, saved_view = session.view:capture_selection()
+    end
+    session.view:render(result.state, selection, saved_view)
+    if session.commands then
+      session.commands:update_help()
+    end
   end)
 end
 
-local function right_click()
+local function right_click(session)
+  local buffer = session.view.buffer
   local mouse = vim.fn.getmousepos()
   if
     mouse.winid == 0
@@ -356,16 +256,17 @@ local function right_click()
   local column = math.min(math.max(mouse.column - 1, 0), #line)
   vim.api.nvim_set_current_win(mouse.winid)
   vim.api.nvim_win_set_cursor(mouse.winid, { mouse.line, column })
-  toggle_fold(mouse.winid)
+  toggle_fold(session, mouse.winid)
 end
 
-local function open_file()
-  if active_mutation or not buffer or not vim.api.nvim_buf_is_valid(buffer) or not state then
+local function open_file(session)
+  local state = session.view.state
+  local buffer = session.view.buffer
+  if session.operation or not vim.api.nvim_buf_is_valid(buffer) or not state then
     return
   end
 
-  local cursor = vim.api.nvim_win_get_cursor(0)
-  local entry = log.entry_at_line(state.log, cursor[1] - HEADER_LINE_COUNT)
+  local entry = session.view:entry_at_cursor(0)
   local file = log.file_for_entry(state.log, entry)
   if not file then
     return
@@ -376,9 +277,8 @@ local function open_file()
     return
   end
 
-  repository.cancel()
   if commit.current_working_copy then
-    local _, err = jump.open_working_file(state.root, file.path, user_window, buffer)
+    local _, err = jump.open_working_file(state.root, file.path, session.user_window, buffer)
     if err then
       vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
     end
@@ -389,302 +289,235 @@ local function open_file()
     return
   end
 
-  local target = buffer
-  local current_state = state
-  run_read(state.root, function(callback)
-    repository.load_file(state.root, file.change_id, file.path, callback)
-  end, function(contents, err, recovered)
-    if target ~= buffer or current_state ~= state or not vim.api.nvim_buf_is_valid(target) then
+  local selection, saved_view = session.view:capture_selection()
+  local initial_state = state
+  local intent = {
+    change_id = file.change_id,
+    path = file.path,
+  }
+  start_operation(session, function(operation)
+    local working_state = initial_state
+    local working_commit = commit
+    local recovered = false
+    local contents, err = repository.load_file(operation, working_state.root, intent.change_id, intent.path)
+    if err and jj.is_stale_error(err) then
+      local recovery = repair_workspace(session, operation, working_state.root, true)
+      if not command_succeeded(recovery) then
+        return nil, mutation_error(recovery)
+      end
+      working_state, err = repository.load(operation, working_state.root)
+      if err then
+        return nil, err
+      end
+      recovered = true
+      working_commit = log.find_commit(working_state.log, intent.change_id)
+      if not working_commit then
+        return { state = working_state }, "Selection no longer exists after recovering the workspace"
+      end
+      contents, err = repository.load_file(operation, working_state.root, intent.change_id, intent.path)
+    end
+    if err then
+      return { state = recovered and working_state or nil }, err
+    end
+    return {
+      commit = working_commit,
+      contents = contents,
+      state = working_state,
+    }
+  end, function(result, err)
+    if not vim.api.nvim_buf_is_valid(buffer) then
       return
     end
     if err then
+      if result and result.state then
+        session.view:render(result.state, selection, saved_view)
+        if session.commands then
+          session.commands:update_help()
+        end
+      end
       vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
       return
     end
-    if recovered then
-      return
+    if result.state ~= session.view.state then
+      session.view:render(result.state, selection, saved_view)
+      if session.commands then
+        session.commands:update_help()
+      end
     end
-
-    local _, open_err = jump.open_historical_file(commit.commit_id, file.path, contents)
+    local _, open_err = jump.open_historical_file(result.commit.commit_id, intent.path, result.contents)
     if open_err then
       vim.notify(open_err, vim.log.levels.ERROR, { title = "Majjit" })
     end
   end)
 end
 
-local function mutation_error(result)
-  local message = result.error
-  if not message or message == "" then
-    message = result.stderr
-  end
-  if not message or message == "" then
-    message = "jj exited with code " .. tostring(result.code)
-  end
-  return message
-end
-
-mutate = function(context, command_list, select_current, opts)
-  opts = opts or {}
-  if active_mutation then
-    vim.notify("A repository operation is already running", vim.log.levels.WARN, { title = "Majjit" })
-    return false
-  end
-
-  if command_list.args then
+local function mutate(session, context, command_list, select_current, append_output)
+  if type(command_list[1]) == "string" then
     command_list = { command_list }
   end
-  repository.cancel()
-  local target = buffer
-  local mutation = {
-    commands = command_list,
-    index = 1,
-    recovery_changed = false,
-    root = context.root or directory,
-  }
-  active_mutation = mutation
-  if opts.append_output and command_output:has_output() then
-    if opts.show_output ~= false then
-      command_output:show()
+  local root = context.root or session.directory
+  local buffer = session.view.buffer
+  local selection = select_current and {} or nil
+  return start_operation(session, function(operation)
+    if append_output and session.output:has_output() then
+      session.output:show()
+    else
+      session.output:start_sequence()
     end
-  else
-    command_output:start_sequence(opts.show_output)
-  end
-  if command_session then
-    command_session:update_mappings()
-  end
-
-  local function finish_failure(result)
-    active_mutation = nil
-    if
-      mutation.recovery_changed
-      and opts.refresh ~= false
-      and target == buffer
-      and target
-      and vim.api.nvim_buf_is_valid(target)
-    then
-      load(target, select_current and {} or nil, false)
+    local changed = false
+    for _, command in ipairs(command_list) do
+      local result = run_command(session, operation, root, command, true)
+      if not command_succeeded(result) and jj.is_stale_error(result) then
+        local recovery = repair_workspace(session, operation, root, true)
+        if not command_succeeded(recovery) then
+          return { failure = recovery }
+        end
+        changed = true
+        result = run_command(session, operation, root, command, true)
+      end
+      if not command_succeeded(result) then
+        local next_state
+        if changed then
+          next_state = load_repository(session, operation, root, true, false)
+        end
+        return { failure = result, state = next_state }
+      end
+      changed = true
     end
-    if opts.on_failure then
-      opts.on_failure(result)
-    elseif not command_output:is_open() then
-      local message = vim.trim(mutation_error(result):gsub("\27%[[0-9;]*m", ""))
+    local next_state, err = load_repository(session, operation, root, true, true)
+    if err then
+      return nil, err
+    end
+    return { state = next_state }
+  end, function(result, err)
+    if not vim.api.nvim_buf_is_valid(buffer) then
+      return
+    end
+    if err then
+      vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
+      return
+    end
+    if result.state then
+      session.view:render(result.state, selection)
+      if session.commands then
+        session.commands:update_help()
+      end
+    end
+    if result.failure and not session.output:is_open() then
+      local message = vim.trim(mutation_error(result.failure):gsub("\27%[[0-9;]*m", ""))
       vim.notify(message, vim.log.levels.ERROR, { title = "Majjit" })
     end
-  end
-
-  local function finish_success()
-    if opts.on_success and opts.hold_active then
-      opts.on_success(function()
-        if active_mutation == mutation then
-          active_mutation = nil
-        end
-      end)
-    elseif opts.on_success then
-      active_mutation = nil
-      opts.on_success()
-    elseif opts.refresh ~= false and target == buffer and target and vim.api.nvim_buf_is_valid(target) then
-      active_mutation = nil
-      load(target, select_current and {} or nil)
-    else
-      active_mutation = nil
-    end
-  end
-
-  local run_command
-  local function run_next()
-    local command = mutation.commands[mutation.index]
-    run_command(command, function()
-      if mutation.index < #mutation.commands then
-        mutation.index = mutation.index + 1
-        run_next()
-      else
-        finish_success()
-      end
-    end, true)
-  end
-
-  run_command = function(command, on_success, allow_recovery)
-    command_output:start_command(command, opts.show_output)
-    mutation.process = jj.run_mutation(mutation.root, command, function(result)
-      if active_mutation ~= mutation then
-        return
-      end
-
-      command_output:finish_command(result)
-      if result.error or result.code ~= 0 then
-        if allow_recovery and jj.is_stale_error(result) then
-          run_command(jj.workspace_update_stale(), function()
-            mutation.recovery_changed = true
-            run_command(command, on_success, false)
-          end, false)
-        else
-          finish_failure(result)
-        end
-        return
-      end
-      on_success()
-    end)
-  end
-
-  run_next()
-  return true
-end
-
-run_read = function(root, start, callback, opts)
-  opts = opts or {}
-  local cancelled = false
-  local current_process
-  local recovered = opts.allow_recovery == false
-
-  local attempt
-  attempt = function()
-    current_process = start(function(value, err, was_recovered)
-      if cancelled then
-        return
-      end
-      if err and not recovered and jj.is_stale_error(err) then
-        recovered = true
-        local started = mutate({ root = root }, jj.workspace_update_stale(), false, {
-          append_output = command_output:has_output(),
-          on_failure = function(result)
-            callback(nil, mutation_error(result))
-          end,
-          hold_active = true,
-          on_success = function(done)
-            if opts.refresh_after_recovery == false then
-              done()
-              attempt()
-              return
-            end
-            local target = buffer
-            if not target or not vim.api.nvim_buf_is_valid(target) then
-              done()
-              return
-            end
-            load(target, nil, false, function(load_err)
-              if cancelled then
-                done()
-                return
-              end
-              done()
-              if load_err then
-                callback(nil, load_err)
-              elseif opts.retry_after_refresh then
-                attempt()
-              else
-                callback(nil, nil, true)
-              end
-            end)
-          end,
-          refresh = false,
-          show_output = opts.suppress_output ~= true,
-        })
-        if not started then
-          callback(nil, err)
-        end
-        return
-      end
-      callback(value, err, was_recovered)
-    end)
-  end
-  attempt()
-
-  return {
-    kill = function(_, signal)
-      cancelled = true
-      if current_process then
-        pcall(current_process.kill, current_process, signal)
-      end
-    end,
-  }
-end
-
-local function select_revision_target(context, prompt, on_select)
-  local root = context.root
-  local revset = context.state.revset
-  command_prompt:select({
-    input_prompt = prompt,
-    load = function(callback)
-      return run_read(root, function(on_load)
-        return jj.revision_targets(root, revset, on_load)
-      end, callback, {
-        retry_after_refresh = true,
-        suppress_output = true,
-      })
-    end,
-    prompt = prompt,
-  }, on_select)
-end
-
-local function input_revsets(context)
-  local root = context.root
-  command_prompt:input({ prompt = "Revsets: " }, function(value, append_output)
-    mutate({ root = root }, jj.new_revision(value, {}), true, { append_output = append_output })
   end)
 end
 
-local function select_bookmark(root, prompt, callback)
-  command_prompt:select({
+local function select_repository_value(session, root, prompt, query, callback)
+  local append_output = false
+  session.prompt:select({
     input_prompt = prompt,
     load = function(on_load)
-      return run_read(root, function(callback)
-        return jj.bookmark_names(root, callback)
-      end, on_load, {
-        retry_after_refresh = true,
-        suppress_output = true,
-      })
+      return start_operation(session, function(operation)
+        local items, err = operation:await(query)
+        local next_state
+        if err and jj.is_stale_error(err) then
+          append_output = true
+          local recovery = repair_workspace(session, operation, root, false)
+          if not command_succeeded(recovery) then
+            return { recovered = true }, mutation_error(recovery)
+          end
+          next_state, err = repository.load(operation, root)
+          if err then
+            return { recovered = true }, err
+          end
+          items, err = operation:await(query)
+        end
+        if err then
+          return { recovered = append_output, state = next_state }, err
+        end
+        return { items = items, recovered = append_output, state = next_state }
+      end, function(result, err)
+        if result and result.recovered then
+          session.prompt:preserve_output()
+        end
+        if err then
+          if result and result.state and vim.api.nvim_buf_is_valid(session.view.buffer) then
+            session.view:render(result.state)
+            if session.commands then
+              session.commands:update_help()
+            end
+          end
+          on_load(nil, err)
+          return
+        end
+        if result.state and vim.api.nvim_buf_is_valid(session.view.buffer) then
+          session.view:render(result.state)
+          if session.commands then
+            session.commands:update_help()
+          end
+        end
+        on_load(result.items, nil)
+      end)
     end,
     prompt = prompt,
-  }, callback)
+  }, function(value)
+    callback(value, append_output)
+  end)
 end
 
-local function select_git_remote(root, callback)
-  command_prompt:select({
-    input_prompt = "Fetch remote: ",
-    load = function(on_load)
-      return run_read(root, function(callback)
-        return jj.git_remote_names(root, callback)
-      end, on_load, {
-        retry_after_refresh = true,
-        suppress_output = true,
-      })
-    end,
-    prompt = "Fetch remote: ",
-  }, callback)
+local function select_revision_target(session, context, prompt, callback)
+  local root = context.root
+  local revset = context.revset
+  select_repository_value(session, root, prompt, function(on_load)
+    return jj.revision_targets(root, revset, on_load)
+  end, callback)
 end
 
-local function reset()
-  if active_mutation then
-    local mutation = active_mutation
-    active_mutation = nil
-    if mutation.process then
-      pcall(mutation.process.kill, mutation.process, 15)
-    end
+local function input_revsets(session, context)
+  local root = context.root
+  session.prompt:input({ prompt = "Revsets: " }, function(value)
+    mutate(session, { root = root }, jj.new_revision(value, {}), true)
+  end)
+end
+
+local function select_bookmark(session, root, prompt, callback)
+  select_repository_value(session, root, prompt, function(on_load)
+    return jj.bookmark_names(root, on_load)
+  end, callback)
+end
+
+local function select_git_remote(session, root, callback)
+  select_repository_value(session, root, "Fetch remote: ", function(on_load)
+    return jj.git_remote_names(root, on_load)
+  end, callback)
+end
+
+local function reset(session)
+  if session.closed then
+    return
   end
-  if command_session then
-    local session = command_session
-    command_session = nil
-    session:detach()
+  session.closed = true
+  if session.operation then
+    session.operation:cancel()
   end
-  if command_prompt then
-    command_prompt:cancel()
-    command_prompt = nil
+  if session.commands then
+    session.commands:detach()
+    session.commands = nil
   end
-  if command_output then
-    command_output:close()
-    command_output = nil
+  if session.prompt then
+    session.prompt:cancel()
+    session.prompt = nil
   end
-  repository.cancel()
-  ignore_immutable = false
+  if session.output then
+    session.output:close()
+    session.output = nil
+  end
   jj.set_ignore_immutable(false)
-  buffer = nil
-  directory = nil
-  state = nil
-  user_window = nil
+  if active_session == session then
+    active_session = nil
+  end
 end
 
-local function close()
-  reset()
+local function close(session)
+  reset(session)
 
   if #vim.api.nvim_list_tabpages() > 1 then
     vim.cmd.tabclose()
@@ -694,20 +527,34 @@ local function close()
 end
 
 function M.open()
-  if buffer and vim.api.nvim_buf_is_valid(buffer) then
-    local windows = vim.fn.win_findbuf(buffer)
-    if windows[1] then
-      vim.api.nvim_set_current_win(windows[1])
-      return
+  if active_session then
+    local buffer = active_session.view.buffer
+    if buffer and vim.api.nvim_buf_is_valid(buffer) then
+      local window = active_session.view:get_window()
+      if window then
+        vim.api.nvim_set_current_win(window)
+        return
+      end
     end
+    reset(active_session)
   end
 
-  directory = vim.fn.getcwd()
-  state = nil
-  user_window = vim.api.nvim_get_current_win()
+  local directory = vim.fn.getcwd()
+  local user_window = vim.api.nvim_get_current_win()
 
   vim.cmd.tabnew()
-  buffer = vim.api.nvim_get_current_buf()
+  local buffer = vim.api.nvim_get_current_buf()
+  local session = {
+    closed = false,
+    commands = nil,
+    directory = directory,
+    operation = nil,
+    output = nil,
+    prompt = nil,
+    user_window = user_window,
+    view = view_module.new(buffer, ansi),
+  }
+  active_session = session
 
   vim.api.nvim_buf_set_name(buffer, "Majjit")
   vim.bo[buffer].bufhidden = "wipe"
@@ -717,173 +564,170 @@ function M.open()
   vim.wo.cursorline = true
   vim.wo.number = false
   vim.wo.relativenumber = false
-  command_output = output_module.new(get_window, ansi)
-  command_prompt = prompt_module.new({
+
+  session.output = output_module.new(function()
+    return session.view:get_window()
+  end, ansi)
+  session.prompt = prompt_module.new({
     can_start = function()
-      return active_mutation == nil
+      return not session.closed and session.operation == nil
     end,
     get_buffer = function()
-      return buffer
+      return not session.closed and session.view.buffer or nil
     end,
-    output = command_output,
+    output = session.output,
     update_mappings = function()
-      if command_session then
-        command_session:update_mappings()
+      if session.commands then
+        session.commands:update_mappings()
       end
     end,
   })
 
-  local target = buffer
   vim.api.nvim_create_autocmd("BufWipeout", {
-    buffer = target,
+    buffer = buffer,
     once = true,
     callback = function()
-      if buffer == target then
-        reset()
-      end
+      reset(session)
     end,
   })
 
-  set_lines(buffer, { "Loading..." })
+  session.view:set_lines({ "Loading..." })
 
-  command_session = commands.attach({
+  session.commands = commands_module.attach({
     actions = {
       ["git.fetch.default"] = function(context)
-        mutate(context, jj.git_fetch(), true)
+        mutate(session, context, jj.git_fetch(), true)
       end,
       ["git.fetch.all_remotes"] = function(context)
-        mutate(context, jj.git_fetch({ "--all-remotes" }), true)
+        mutate(session, context, jj.git_fetch({ "--all-remotes" }), true)
       end,
       ["git.fetch.tracked"] = function(context)
-        mutate(context, jj.git_fetch({ "--tracked" }), true)
+        mutate(session, context, jj.git_fetch({ "--tracked" }), true)
       end,
       ["git.fetch.branch"] = function(context)
         local root = context.root
-        select_bookmark(root, "Fetch branch: ", function(name, append_output)
-          mutate({ root = root }, jj.git_fetch({ "-b", name }), true, { append_output = append_output })
+        select_bookmark(session, root, "Fetch branch: ", function(name, append_output)
+          mutate(session, { root = root }, jj.git_fetch({ "-b", name }), true, append_output)
         end)
       end,
       ["git.fetch.remote"] = function(context)
         local root = context.root
-        select_git_remote(root, function(remote, append_output)
-          mutate({ root = root }, jj.git_fetch({ "--remote", remote }), true, { append_output = append_output })
+        select_git_remote(session, root, function(remote, append_output)
+          mutate(session, { root = root }, jj.git_fetch({ "--remote", remote }), true, append_output)
         end)
       end,
       ["git.push.default"] = function(context)
-        mutate(context, jj.git_push(), true)
+        mutate(session, context, jj.git_push(), true)
       end,
       ["git.push.all"] = function(context)
-        mutate(context, jj.git_push({ "--all" }), true)
+        mutate(session, context, jj.git_push({ "--all" }), true)
       end,
       ["git.push.revision"] = function(context)
-        mutate(context, jj.git_push({ "-r", context.commit.change_id }), true)
+        mutate(session, context, jj.git_push({ "-r", context.commit.change_id }), true)
       end,
       ["git.push.tracked"] = function(context)
-        mutate(context, jj.git_push({ "--tracked" }), true)
+        mutate(session, context, jj.git_push({ "--tracked" }), true)
       end,
       ["git.push.deleted"] = function(context)
-        mutate(context, jj.git_push({ "--deleted" }), true)
+        mutate(session, context, jj.git_push({ "--deleted" }), true)
       end,
       ["git.push.change"] = function(context)
-        mutate(context, jj.git_push({ "-c", context.commit.change_id }), true)
+        mutate(session, context, jj.git_push({ "-c", context.commit.change_id }), true)
       end,
       ["git.push.named"] = function(context)
         local root = context.root
         local change_id = context.commit.change_id
-        command_prompt:input({ prompt = "Bookmark name: " }, function(name, append_output)
-          mutate(
-            { root = root },
-            jj.git_push({ "--named", name .. "=" .. change_id }),
-            true,
-            { append_output = append_output }
-          )
+        session.prompt:input({ prompt = "Bookmark name: " }, function(name)
+          mutate(session, { root = root }, jj.git_push({ "--named", name .. "=" .. change_id }), true)
         end)
       end,
       ["git.push.bookmark"] = function(context)
         local root = context.root
-        select_bookmark(root, "Push bookmark: ", function(name, append_output)
-          mutate({ root = root }, jj.git_push({ "-b", name }), true, { append_output = append_output })
+        select_bookmark(session, root, "Push bookmark: ", function(name, append_output)
+          mutate(session, { root = root }, jj.git_push({ "-b", name }), true, append_output)
         end)
       end,
       ["operation.redo"] = function(context)
-        mutate(context, jj.redo())
+        mutate(session, context, jj.redo())
       end,
       ["operation.undo"] = function(context)
-        mutate(context, jj.undo())
+        mutate(session, context, jj.undo())
       end,
       ["options.ignore_immutable"] = function()
-        ignore_immutable = not ignore_immutable
-        jj.set_ignore_immutable(ignore_immutable)
-        if buffer and state and vim.api.nvim_buf_is_valid(buffer) then
-          render(buffer, state)
-        end
+        local enabled = not session.view.ignore_immutable
+        jj.set_ignore_immutable(enabled)
+        session.view:set_ignore_immutable(enabled)
       end,
       ["revision.abandon.selection"] = function(context)
-        mutate(context, jj.abandon(context.commit.change_id, {}))
+        mutate(session, context, jj.abandon(context.commit.change_id, {}))
       end,
       ["revision.abandon.retain_bookmarks"] = function(context)
-        mutate(context, jj.abandon(context.commit.change_id, { "--retain-bookmarks" }))
+        mutate(session, context, jj.abandon(context.commit.change_id, { "--retain-bookmarks" }))
       end,
       ["revision.abandon.restore_descendants"] = function(context)
-        mutate(context, jj.abandon(context.commit.change_id, { "--restore-descendants" }))
+        mutate(session, context, jj.abandon(context.commit.change_id, { "--restore-descendants" }))
       end,
       ["revision.edit.selection"] = function(context)
-        mutate(context, jj.edit(context.commit.change_id))
+        mutate(session, context, jj.edit(context.commit.change_id))
       end,
       ["revision.edit.target"] = function(context)
         local root = context.root
-        select_revision_target(context, "Edit: ", function(selected, append_output)
-          mutate({ root = root }, jj.edit(selected), true, { append_output = append_output })
+        select_revision_target(session, context, "Edit: ", function(selected, append_output)
+          mutate(session, { root = root }, jj.edit(selected), true, append_output)
         end)
       end,
       ["revision.new.after"] = function(context)
-        mutate(context, jj.new_revision(context.commit.change_id, {}), true)
+        mutate(session, context, jj.new_revision(context.commit.change_id, {}), true)
       end,
       ["revision.new.insert_after"] = function(context)
-        mutate(context, jj.new_revision(context.commit.change_id, { "--insert-after" }), true)
+        mutate(session, context, jj.new_revision(context.commit.change_id, { "--insert-after" }), true)
       end,
       ["revision.new.insert_before"] = function(context)
-        mutate(context, jj.new_revision(context.commit.change_id, { "--no-edit", "--insert-before" }), true)
+        mutate(session, context, jj.new_revision(context.commit.change_id, { "--no-edit", "--insert-before" }), true)
       end,
       ["revision.new.trunk"] = function(context)
-        mutate(context, jj.new_revision("trunk()", {}), true)
+        mutate(session, context, jj.new_revision("trunk()", {}), true)
       end,
       ["revision.new.trunk_sync"] = function(context)
-        mutate(context, { jj.git_fetch(), jj.new_revision("trunk()", {}) }, true)
+        mutate(session, context, { jj.git_fetch(), jj.new_revision("trunk()", {}) }, true)
       end,
       ["revision.new.target"] = function(context)
         local root = context.root
-        select_revision_target(context, "New after: ", function(selected, append_output)
-          mutate({ root = root }, jj.new_revision(selected, {}), true, { append_output = append_output })
+        select_revision_target(session, context, "New after: ", function(selected, append_output)
+          mutate(session, { root = root }, jj.new_revision(selected, {}), true, append_output)
         end)
       end,
       ["revision.new.revsets"] = function(context)
-        input_revsets(context)
+        input_revsets(session, context)
       end,
       ["view.close"] = function()
-        close()
+        close(session)
       end,
       ["view.open"] = function()
-        open_file()
+        open_file(session)
       end,
       ["view.refresh"] = function()
-        refresh()
+        refresh(session)
       end,
       ["view.right_click"] = function()
-        right_click()
+        right_click(session)
       end,
       ["view.toggle"] = function()
-        toggle_fold()
+        toggle_fold(session)
       end,
     },
     buffer = buffer,
-    get_context = get_context,
-    get_window = get_window,
-    overlay = command_output,
+    get_context = function()
+      return session.view:get_context()
+    end,
+    get_window = function()
+      return session.view:get_window()
+    end,
+    overlay = session.output,
     tree = command_tree,
   })
 
-  load(buffer)
+  load(session)
 end
 
 return M

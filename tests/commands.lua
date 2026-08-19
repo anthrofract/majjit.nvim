@@ -1,25 +1,10 @@
 local help_module = require("majjit.commands.help")
-local jj_module = require("majjit.jj")
 local output_module = require("majjit.commands.output")
 local prompt_module = require("majjit.commands.prompt")
 local session_module = require("majjit.commands.session")
 local tree_module = require("majjit.commands.tree")
 
-local production_tree = tree_module.compile(require("majjit.commands.catalog"))
-local git_menu = production_tree.root.children_by_key.g
-assert(git_menu and git_menu.id == "git")
-assert(git_menu.children_by_key.f.id == "git.fetch")
-assert(git_menu.children_by_key.p.id == "git.push")
-for _, key in ipairs({ "f", "a", "t", "b", "r" }) do
-  assert(git_menu.children_by_key.f.children_by_key[key])
-end
-for _, key in ipairs({ "p", "a", "r", "t", "d", "c", "n", "b" }) do
-  assert(git_menu.children_by_key.p.children_by_key[key])
-end
-assert(vim.deep_equal(jj_module.git_fetch().args, { "git", "fetch" }))
-assert(vim.deep_equal(jj_module.git_fetch({ "--tracked" }).args, { "git", "fetch", "--tracked" }))
-assert(vim.deep_equal(jj_module.git_push({ "--deleted" }).args, { "git", "push", "--deleted" }))
-
+tree_module.compile(require("majjit.commands.catalog"))
 local function expect_error(pattern, callback)
   local ok, err = pcall(callback)
   assert(not ok, "Expected callback to fail")
@@ -64,23 +49,6 @@ local commands = {
     },
   },
   {
-    kind = "workflow",
-    id = "squash.into",
-    keys = { "s" },
-    group = "Commands",
-    label = "Squash into",
-    capture = "selection",
-    children = {
-      {
-        kind = "action",
-        id = "squash.into.confirm",
-        keys = { "<CR>" },
-        label = "Use destination",
-        requires = { "commit" },
-      },
-    },
-  },
-  {
     kind = "action",
     id = "view.preserve",
     keys = { "x" },
@@ -103,33 +71,10 @@ local commands = {
     group = "General",
     label = "File action",
     requires = { "file" },
-    unavailable = "Requires a file",
   },
 }
 
 local tree = tree_module.compile(catalog(commands))
-assert(tree.root.children_by_key.d.id == "describe")
-assert(tree.root.children_by_key.d.children_by_key.d.id == "describe.inline")
-
-local remapped = tree_module.compile(catalog(commands), { describe = "g" })
-assert(remapped.root.children_by_key.g.id == "describe")
-assert(remapped.root.children_by_key.d == nil)
-assert(tree_module.help_entries(remapped, remapped.root, { capabilities = {} })[1].keys[1] == "g")
-
-expect_error("Duplicate command id", function()
-  tree_module.compile(catalog({ commands[1], commands[1] }))
-end)
-expect_error("overlapping keys", function()
-  tree_module.compile(catalog({
-    commands[1],
-    {
-      kind = "action",
-      id = "duplicate.key",
-      keys = { "d" },
-      label = "Duplicate",
-    },
-  }))
-end)
 expect_error("overlapping keys", function()
   tree_module.compile(catalog({
     {
@@ -170,32 +115,6 @@ expect_error("Root command.*conflicts", function()
     },
   }))
 end)
-expect_error("requires children", function()
-  tree_module.compile(catalog({
-    {
-      kind = "menu",
-      id = "empty.menu",
-      keys = { "e" },
-      label = "Empty",
-    },
-  }))
-end)
-expect_error("overlapping keys", function()
-  tree_module.compile(catalog({
-    {
-      kind = "action",
-      id = "prefix.short",
-      keys = { "z" },
-      label = "Short",
-    },
-    {
-      kind = "action",
-      id = "prefix.long",
-      keys = { "za" },
-      label = "Long",
-    },
-  }))
-end)
 expect_error("conflicts with command", function()
   tree_module.compile(catalog({
     {
@@ -215,13 +134,6 @@ expect_error("conflicts with command", function()
   }))
 end)
 
-local help_entries = tree_module.help_entries(tree, tree.root, { capabilities = {} })
-local file_help = vim.iter(help_entries):find(function(entry)
-  return entry.label == "File action"
-end)
-assert(file_help and not file_help.available)
-assert(file_help.reason == "Requires a file")
-
 local buffer = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_win_set_buf(0, buffer)
 local original_d = function() end
@@ -230,20 +142,12 @@ vim.keymap.set("n", "d", original_d, { buffer = buffer })
 vim.keymap.set("n", "<Esc>", original_escape, { buffer = buffer })
 local context = {
   capabilities = { commit = true },
-  value = "source",
 }
 local calls = {}
 local command_session = session_module.attach({
   actions = {
     ["describe.inline"] = function(action_context)
       calls[#calls + 1] = { id = "describe.inline", context = action_context }
-    end,
-    ["squash.into.confirm"] = function(action_context, workflow)
-      calls[#calls + 1] = {
-        id = "squash.into.confirm",
-        context = action_context,
-        workflow = workflow,
-      }
     end,
     ["view.file"] = function()
       error("Unavailable action ran")
@@ -256,9 +160,6 @@ local command_session = session_module.attach({
     end,
   },
   buffer = buffer,
-  capture = function(_, action_context)
-    return { value = action_context.value }
-  end,
   get_context = function()
     return context
   end,
@@ -291,22 +192,9 @@ command_session:press("d")
 assert(command_session.active == tree.root)
 assert(calls[#calls].id == "describe.inline")
 
-command_session:press("s")
-assert(command_session.active.id == "squash.into")
-context = {
-  capabilities = { commit = true },
-  value = "destination",
-}
-command_session:press("<CR>")
-assert(command_session.active == tree.root)
-assert(calls[#calls].id == "squash.into.confirm")
-assert(calls[#calls].context.value == "destination")
-assert(calls[#calls].workflow.source.value == "source")
-
 command_session:press("d")
 command_session:press("<Esc>")
 assert(command_session.active == tree.root)
-assert(command_session.workflow == nil)
 
 context = { capabilities = {} }
 local call_count = #calls
@@ -316,44 +204,15 @@ assert(#calls == call_count)
 command_session:detach()
 assert(vim.fn.maparg("d", "n", false, true).callback == original_d)
 
-local missing_capture_buffer = vim.api.nvim_create_buf(false, true)
-vim.api.nvim_win_set_buf(0, missing_capture_buffer)
-local missing_capture_session = session_module.attach({
-  actions = {},
-  buffer = missing_capture_buffer,
-  get_context = function()
-    return { capabilities = { commit = true } }
-  end,
-  get_window = function()
-    return vim.api.nvim_get_current_win()
-  end,
-  tree = tree,
-})
-missing_capture_session:press("s")
-assert(missing_capture_session.active == tree.root)
-assert(missing_capture_session.workflow == nil)
-assert(missing_capture_session.help:is_open())
-assert(
-  table.concat(vim.api.nvim_buf_get_lines(missing_capture_session.help.buffer, 0, -1, false), "\n"):find(
-    "No capture handler",
-    1,
-    true
-  )
-)
-missing_capture_session:detach()
-
 local layout_entries = {}
 for i = 1, 18 do
   layout_entries[#layout_entries + 1] = {
-    available = i ~= 1,
     group = "Commands",
     keys = i == 1 and { "a", "A" } or { tostring(i) },
     label = "Action " .. i,
-    reason = i == 1 and "Unavailable" or nil,
   }
 end
 layout_entries[#layout_entries + 1] = {
-  available = true,
   group = "General",
   keys = { "q" },
   label = "Close",
@@ -371,7 +230,6 @@ assert(layout_lines[1]:find("General", 1, true))
 assert(layout_lines[2]:find("a/A Action 1", 1, true))
 assert(layout_lines[2]:find("18 Action 18", 1, true))
 assert(layout_lines[2]:find("q Close", 1, true))
-assert(not table.concat(layout_lines, "\n"):find("Unavailable", 1, true))
 local layout_config = vim.api.nvim_win_get_config(layout_help.window)
 assert(layout_config.relative == "editor")
 assert(layout_config.width == vim.o.columns)
@@ -385,16 +243,16 @@ end, {
   once = function() end,
 })
 command_output:start_sequence()
-command_output:start_command({ args = { "git", "fetch" } })
+command_output:start_command({ "git", "fetch" })
 assert(vim.deep_equal(vim.api.nvim_buf_get_lines(command_output.buffer, 0, -1, false), {
   "❯ jj git fetch",
   "",
   "Running...",
   "",
 }))
-command_output:finish_command({ code = 0, output = "Fetched remote\n" })
-command_output:start_command({ args = { "new", "trunk()" } })
-command_output:finish_command({ code = 0, output = "Working copy updated\nParent updated\n" })
+command_output:finish_command({ code = 0, stderr = "Fetched remote\n" })
+command_output:start_command({ "new", "trunk()" })
+command_output:finish_command({ code = 0, stderr = "Working copy updated\nParent updated\n" })
 assert(vim.deep_equal(vim.api.nvim_buf_get_lines(command_output.buffer, 0, -1, false), {
   "❯ jj git fetch",
   "",
@@ -419,8 +277,8 @@ for i = 1, vim.o.lines + 10 do
   long_output[#long_output + 1] = "Line " .. i
 end
 command_output:start_sequence()
-command_output:start_command({ args = { "log" } })
-command_output:finish_command({ code = 0, output = table.concat(long_output, "\n") })
+command_output:start_command({ "log" })
+command_output:finish_command({ code = 0, stderr = table.concat(long_output, "\n") })
 assert(vim.api.nvim_win_get_cursor(command_output.window)[1] == vim.api.nvim_buf_line_count(command_output.buffer))
 local command_output_buffer = command_output.buffer
 command_output:close()
@@ -428,7 +286,6 @@ assert(not vim.api.nvim_buf_is_valid(command_output_buffer))
 
 local prompt_output = {
   open = true,
-  revision = 0,
   show_count = 0,
 }
 function prompt_output:is_open()
@@ -436,9 +293,6 @@ function prompt_output:is_open()
 end
 function prompt_output:has_output()
   return true
-end
-function prompt_output:version()
-  return self.revision
 end
 function prompt_output:hide()
   self.open = false

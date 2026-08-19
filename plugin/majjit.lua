@@ -1,5 +1,5 @@
 vim.api.nvim_create_user_command("Majjit", function()
-  require("majjit").open()
+  require("majjit.main").open()
 end, {
   desc = "Open Majjit",
 })

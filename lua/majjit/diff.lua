@@ -43,7 +43,6 @@ local function parse_summary_line(change_id, graph_indent, line)
     expanded = false,
     hunks = {},
     path = path,
-    status = status,
     status_label = STATUS_LABELS[status],
   }, nil
 end

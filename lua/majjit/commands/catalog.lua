@@ -27,7 +27,6 @@ return {
           keys = { "a" },
           label = "Selection",
           requires = { "commit" },
-          unavailable = "Requires a commit",
         },
         {
           kind = "action",
@@ -35,7 +34,6 @@ return {
           keys = { "b" },
           label = "Selection (retain bookmarks)",
           requires = { "commit" },
-          unavailable = "Requires a commit",
         },
         {
           kind = "action",
@@ -43,7 +41,6 @@ return {
           keys = { "d" },
           label = "Selection (restore descendants)",
           requires = { "commit" },
-          unavailable = "Requires a commit",
         },
       },
     },
@@ -60,7 +57,6 @@ return {
           keys = { "e" },
           label = "Selection",
           requires = { "commit" },
-          unavailable = "Requires a commit",
         },
         {
           kind = "action",
@@ -68,7 +64,6 @@ return {
           keys = { "/" },
           label = "Target",
           requires = { "repository" },
-          unavailable = "Requires a repository",
         },
       },
     },
@@ -93,7 +88,6 @@ return {
               group = "Git fetch",
               label = "Default",
               requires = { "repository" },
-              unavailable = "Requires a repository",
             },
             {
               kind = "action",
@@ -102,7 +96,6 @@ return {
               group = "Git fetch",
               label = "All remotes",
               requires = { "repository" },
-              unavailable = "Requires a repository",
             },
             {
               kind = "action",
@@ -111,7 +104,6 @@ return {
               group = "Git fetch",
               label = "Tracked bookmarks and tags",
               requires = { "repository" },
-              unavailable = "Requires a repository",
             },
             {
               kind = "action",
@@ -120,7 +112,6 @@ return {
               group = "Git fetch",
               label = "Branch by name",
               requires = { "repository" },
-              unavailable = "Requires a repository",
             },
             {
               kind = "action",
@@ -129,7 +120,6 @@ return {
               group = "Git fetch",
               label = "Remote by name",
               requires = { "repository" },
-              unavailable = "Requires a repository",
             },
           },
         },
@@ -147,7 +137,6 @@ return {
               group = "Git push",
               label = "Default",
               requires = { "repository" },
-              unavailable = "Requires a repository",
             },
             {
               kind = "action",
@@ -156,7 +145,6 @@ return {
               group = "Git push",
               label = "All bookmarks and tags",
               requires = { "repository" },
-              unavailable = "Requires a repository",
             },
             {
               kind = "action",
@@ -165,7 +153,6 @@ return {
               group = "Git push",
               label = "Bookmarks and tags at selection",
               requires = { "commit" },
-              unavailable = "Requires a commit",
             },
             {
               kind = "action",
@@ -174,7 +161,6 @@ return {
               group = "Git push",
               label = "Tracked bookmarks and tags",
               requires = { "repository" },
-              unavailable = "Requires a repository",
             },
             {
               kind = "action",
@@ -183,7 +169,6 @@ return {
               group = "Git push",
               label = "Deleted bookmarks and tags",
               requires = { "repository" },
-              unavailable = "Requires a repository",
             },
             {
               kind = "action",
@@ -192,7 +177,6 @@ return {
               group = "Git push",
               label = "New bookmark for selection",
               requires = { "commit" },
-              unavailable = "Requires a commit",
             },
             {
               kind = "action",
@@ -201,7 +185,6 @@ return {
               group = "Git push",
               label = "New named bookmark for selection",
               requires = { "commit" },
-              unavailable = "Requires a commit",
             },
             {
               kind = "action",
@@ -210,7 +193,6 @@ return {
               group = "Git push",
               label = "Bookmark by name",
               requires = { "repository" },
-              unavailable = "Requires a repository",
             },
           },
         },
@@ -229,7 +211,6 @@ return {
           keys = { "n" },
           label = "After selection",
           requires = { "commit" },
-          unavailable = "Requires a commit",
         },
         {
           kind = "action",
@@ -237,7 +218,6 @@ return {
           keys = { "a" },
           label = "After selection (rebase children)",
           requires = { "commit" },
-          unavailable = "Requires a commit",
         },
         {
           kind = "action",
@@ -245,7 +225,6 @@ return {
           keys = { "b" },
           label = "Before selection (rebase children)",
           requires = { "commit" },
-          unavailable = "Requires a commit",
         },
         {
           kind = "action",
@@ -253,7 +232,6 @@ return {
           keys = { "m" },
           label = "After trunk",
           requires = { "repository" },
-          unavailable = "Requires a repository",
         },
         {
           kind = "action",
@@ -261,7 +239,6 @@ return {
           keys = { "M" },
           label = "After trunk (sync)",
           requires = { "repository" },
-          unavailable = "Requires a repository",
         },
         {
           kind = "action",
@@ -269,7 +246,6 @@ return {
           keys = { "/" },
           label = "After target",
           requires = { "repository" },
-          unavailable = "Requires a repository",
         },
         {
           kind = "action",
@@ -277,7 +253,6 @@ return {
           keys = { "r" },
           label = "After revsets",
           requires = { "repository" },
-          unavailable = "Requires a repository",
         },
       },
     },
@@ -326,7 +301,6 @@ return {
       group = "General",
       label = "Open",
       requires = { "file" },
-      unavailable = "Requires a file",
     },
     {
       kind = "action",
@@ -343,7 +317,6 @@ return {
       group = "General",
       label = "Toggle fold",
       requires = { "foldable" },
-      unavailable = "Requires a fold",
       available_during_session = true,
       preserve_session = true,
     },

@@ -36,7 +36,6 @@ function M.attach(opts)
     active = opts.tree.root,
     autocmd_group = vim.api.nvim_create_augroup("majjit-commands-" .. opts.buffer, { clear = true }),
     buffer = opts.buffer,
-    capture = opts.capture,
     captured_keys = {},
     detached = false,
     displaced_mappings = {},
@@ -47,7 +46,6 @@ function M.attach(opts)
     overlay = opts.overlay,
     restore_overlay = false,
     tree = opts.tree,
-    workflow = nil,
   }, Session)
 
   vim.api.nvim_create_autocmd("CursorMoved", {
@@ -93,7 +91,7 @@ end
 function Session:_map(key, description)
   if not self.captured_keys[key] then
     local mapping = vim.fn.maparg(key, "n", false, true)
-    self.displaced_mappings[key] = not vim.tbl_isempty(mapping) and mapping or nil
+    self.displaced_mappings[key] = mapping.buffer == 1 and mapping or nil
     self.captured_keys[key] = true
   end
   vim.keymap.set("n", key, function()
@@ -153,7 +151,7 @@ function Session:_render_help()
     self.overlay:hide()
     self.restore_overlay = true
   end
-  self.help:show(tree_module.help_entries(self.tree, self.active, self:_context()), self.error_message)
+  self.help:show(tree_module.help_entries(self.tree, self.active), self.error_message)
   if not was_open then
     self:_apply_mappings()
   end
@@ -178,7 +176,6 @@ end
 function Session:_reset(restore_overlay)
   self.active = self.tree.root
   self.error_message = nil
-  self.workflow = nil
   self.help:close()
   if restore_overlay ~= false and self.restore_overlay and self.overlay then
     self.overlay:show()
@@ -213,22 +210,7 @@ function Session:_activate(node)
     return
   end
 
-  if node.kind == "menu" or node.kind == "workflow" then
-    if node.kind == "workflow" then
-      if not self.capture then
-        self:_show_error(("No capture handler for workflow '%s'"):format(node.id))
-        return
-      end
-      local source, capture_error = self.capture(node.capture, context)
-      if not source then
-        self:_show_error(capture_error or "Cannot capture selection")
-        return
-      end
-      self.workflow = {
-        id = node.id,
-        source = source,
-      }
-    end
+  if node.kind == "menu" then
     self.active = node
     self.error_message = nil
     self:_apply_mappings()
@@ -238,11 +220,10 @@ function Session:_activate(node)
 
   local action = self.actions[node.id]
   assert(action, ("No action registered for command '%s'"):format(node.id))
-  local workflow = self.workflow
   if not node.preserve_session then
     self:_reset()
   end
-  local ok, err = pcall(action, context, workflow)
+  local ok, err = pcall(action, context)
   if not ok then
     vim.notify(tostring(err), vim.log.levels.ERROR, { title = "Majjit" })
   end
@@ -273,9 +254,6 @@ function Session:press(key)
   if self.active ~= self.tree.root then
     local root_node = self.tree.root.children_by_key[key]
     if root_node and root_node.available_during_session then
-      if not root_node.preserve_session then
-        self:_reset()
-      end
       self:_activate(root_node)
       return
     end

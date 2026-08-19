@@ -18,11 +18,25 @@ local function base_command(repository, color)
   return command
 end
 
-local function run(repository, args, opts, callback)
-  local command = base_command(repository, opts.color)
+local function execute(repository, args, color, callback)
+  local command = base_command(repository, color)
   vim.list_extend(command, args)
+  local ok, process = pcall(vim.system, command, { text = true }, vim.schedule_wrap(callback))
+  if not ok then
+    vim.schedule(function()
+      callback({ error = tostring(process) })
+    end)
+    return nil
+  end
+  return process
+end
 
-  local function on_exit(result)
+local function run(repository, args, opts, callback)
+  return execute(repository, args, opts.color, function(result)
+    if result.error then
+      callback(nil, result.error)
+      return
+    end
     if result.code == 0 then
       callback(result.stdout, nil)
       return
@@ -33,30 +47,13 @@ local function run(repository, args, opts, callback)
       message = ("jj exited with code %d"):format(result.code)
     end
     callback(nil, message)
-  end
-
-  local ok, process = pcall(vim.system, command, { text = true }, vim.schedule_wrap(on_exit))
-  if not ok then
-    vim.schedule(function()
-      callback(nil, tostring(process))
-    end)
-    return nil
-  end
-
-  return process
-end
-
-local function mutation(args)
-  return {
-    args = args,
-    output = "stderr",
-  }
+  end)
 end
 
 local function git_mutation(operation, args)
   local command = { "git", operation }
   vim.list_extend(command, args or {})
-  return mutation(command)
+  return command
 end
 
 local function parse_lines(output, transform)
@@ -89,7 +86,7 @@ function M.abandon(change_id, flags)
   local args = { "abandon" }
   vim.list_extend(args, flags)
   args[#args + 1] = change_id
-  return mutation(args)
+  return args
 end
 
 function M.bookmark_names(repository, callback)
@@ -122,7 +119,7 @@ function M.diff_file(repository, change_id, path, callback)
 end
 
 function M.edit(change_id)
-  return mutation({ "edit", change_id })
+  return { "edit", change_id }
 end
 
 function M.file_show(repository, change_id, path, callback)
@@ -173,11 +170,11 @@ function M.new_revision(target, flags)
   local args = { "new" }
   vim.list_extend(args, flags)
   args[#args + 1] = target
-  return mutation(args)
+  return args
 end
 
 function M.redo()
-  return mutation({ "redo" })
+  return { "redo" }
 end
 
 function M.revision_targets(repository, revset, callback)
@@ -197,28 +194,7 @@ function M.revision_targets(repository, revset, callback)
 end
 
 function M.run_mutation(repository, command, callback)
-  local args = base_command(repository, "always")
-  vim.list_extend(args, command.args)
-
-  local function on_exit(result)
-    callback({
-      code = result.code,
-      output = result[command.output],
-      signal = result.signal,
-      stderr = result.stderr,
-      stdout = result.stdout,
-    })
-  end
-
-  local ok, process = pcall(vim.system, args, { text = true }, vim.schedule_wrap(on_exit))
-  if not ok then
-    vim.schedule(function()
-      callback({ error = tostring(process) })
-    end)
-    return nil
-  end
-
-  return process
+  return execute(repository, command, "always", callback)
 end
 
 function M.set_ignore_immutable(enabled)
@@ -226,11 +202,11 @@ function M.set_ignore_immutable(enabled)
 end
 
 function M.undo()
-  return mutation({ "undo" })
+  return { "undo" }
 end
 
 function M.workspace_update_stale()
-  return mutation({ "workspace", "update-stale" })
+  return { "workspace", "update-stale" }
 end
 
 return M
