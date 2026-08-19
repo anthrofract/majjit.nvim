@@ -304,6 +304,15 @@ return {
     },
     {
       kind = "action",
+      id = "options.ignore_immutable",
+      keys = { "I" },
+      group = "General",
+      label = "Toggle --ignore-immutable",
+      available_during_session = true,
+      preserve_session = true,
+    },
+    {
+      kind = "action",
       id = "view.close",
       keys = { "q" },
       group = "General",

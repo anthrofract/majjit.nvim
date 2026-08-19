@@ -17,6 +17,7 @@ local directory
 local jump = require("majjit.jump")
 local jj = require("majjit.jj")
 local log = require("majjit.log")
+local ignore_immutable = false
 local active_mutation
 local namespace = vim.api.nvim_create_namespace("majjit")
 local output_module = require("majjit.commands.output")
@@ -98,6 +99,13 @@ local function highlight_header(target, root, revset)
     end_col = revset_start + #revset,
     hl_group = "String",
   })
+  if ignore_immutable then
+    local option_start = revset_start + #revset + 2
+    vim.api.nvim_buf_set_extmark(target, namespace, 0, option_start, {
+      end_col = option_start + #"--ignore-immutable",
+      hl_group = "DiagnosticError",
+    })
+  end
 end
 
 local function highlight_log(target, revision_log)
@@ -216,7 +224,11 @@ local function render(target, next_state, selection, view)
     selection, view = capture_selection(target)
   end
   local lines = {
-    "repository: " .. next_state.root .. "  revset: " .. next_state.revset,
+    "repository: "
+      .. next_state.root
+      .. "  revset: "
+      .. next_state.revset
+      .. (ignore_immutable and "  --ignore-immutable" or ""),
     "",
   }
   vim.list_extend(lines, next_state.log.lines)
@@ -499,6 +511,8 @@ local function reset()
     command_output = nil
   end
   repository.cancel()
+  ignore_immutable = false
+  jj.set_ignore_immutable(false)
   buffer = nil
   directory = nil
   state = nil
@@ -627,6 +641,13 @@ function M.open()
       end,
       ["operation.undo"] = function(context)
         mutate(context, jj.undo())
+      end,
+      ["options.ignore_immutable"] = function()
+        ignore_immutable = not ignore_immutable
+        jj.set_ignore_immutable(ignore_immutable)
+        if buffer and state and vim.api.nvim_buf_is_valid(buffer) then
+          render(buffer, state)
+        end
       end,
       ["revision.abandon.selection"] = function(context)
         mutate(context, jj.abandon(context.commit.change_id, {}))

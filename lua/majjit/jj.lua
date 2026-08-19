@@ -1,4 +1,5 @@
 local M = {}
+local ignore_immutable = false
 
 local REVISION_TARGET_TEMPLATE = [=[
 change_id.shortest(8) ++ "\n"
@@ -9,8 +10,16 @@ change_id.shortest(8) ++ "\n"
   ++ working_copies ++ "\n"
 ]=]
 
+local function base_command(repository, color)
+  local command = { "jj", "--color", color, "--no-pager", "--repository", repository }
+  if ignore_immutable then
+    command[#command + 1] = "--ignore-immutable"
+  end
+  return command
+end
+
 local function run(repository, args, opts, callback)
-  local command = { "jj", "--color", opts.color, "--no-pager", "--repository", repository }
+  local command = base_command(repository, opts.color)
   vim.list_extend(command, args)
 
   local function on_exit(result)
@@ -172,7 +181,7 @@ function M.revision_targets(repository, revset, callback)
 end
 
 function M.run_mutation(repository, command, callback)
-  local args = { "jj", "--color", "always", "--no-pager", "--repository", repository }
+  local args = base_command(repository, "always")
   vim.list_extend(args, command.args)
 
   local function on_exit(result)
@@ -194,6 +203,10 @@ function M.run_mutation(repository, command, callback)
   end
 
   return process
+end
+
+function M.set_ignore_immutable(enabled)
+  ignore_immutable = enabled
 end
 
 function M.undo()
