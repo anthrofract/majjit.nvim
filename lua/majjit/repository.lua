@@ -1,3 +1,4 @@
+local diff = require("majjit.diff")
 local jj = require("majjit.jj")
 local log = require("majjit.log")
 
@@ -40,12 +41,55 @@ function M.load(cwd, callback)
         return
       end
 
-      callback({
-        root = root,
-        revset = DEFAULT_REVSET,
-        log = revision_log,
-      }, nil)
+      local current_commit = log.current_commit(revision_log)
+      if not current_commit then
+        callback({
+          root = root,
+          revset = DEFAULT_REVSET,
+          log = revision_log,
+        }, nil)
+        return
+      end
+
+      active_process = diff.load_summary(
+        root,
+        current_commit.change_id,
+        current_commit.graph_indent,
+        function(files, diff_err)
+          if current_generation ~= generation then
+            return
+          end
+          active_process = nil
+          if diff_err then
+            callback(nil, diff_err)
+            return
+          end
+
+          current_commit.expanded = true
+          current_commit.files = files
+          current_commit.loaded = true
+          log.flatten(revision_log)
+          callback({
+            root = root,
+            revset = DEFAULT_REVSET,
+            log = revision_log,
+          }, nil)
+        end
+      )
     end)
+  end)
+end
+
+function M.load_files(root, commit, callback)
+  M.cancel()
+  local current_generation = generation
+
+  active_process = diff.load_summary(root, commit.change_id, commit.graph_indent, function(files, err)
+    if current_generation ~= generation then
+      return
+    end
+    active_process = nil
+    callback(files, err)
   end)
 end
 

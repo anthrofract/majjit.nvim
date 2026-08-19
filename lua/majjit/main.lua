@@ -5,6 +5,7 @@ local ansi = require("baleia").setup({
   name = "MajjitAnsi",
 })
 local HEADER_LINE_COUNT = 2
+local FOLD_MARKER_WIDTH = #"▸"
 local buffer
 local directory
 local log = require("majjit.log")
@@ -45,6 +46,25 @@ local function highlight_header(target, root, revset)
   })
 end
 
+local function highlight_log(target, revision_log)
+  for _, entry in ipairs(revision_log.entries) do
+    if entry.kind == "commit" or entry.kind == "file" then
+      local row = entry.line + HEADER_LINE_COUNT - 1
+      vim.api.nvim_buf_set_extmark(target, namespace, row, entry.fold_column, {
+        end_col = entry.fold_column + FOLD_MARKER_WIDTH,
+        hl_group = "Comment",
+      })
+
+      if entry.kind == "file" then
+        vim.api.nvim_buf_set_extmark(target, namespace, row, entry.content_column, {
+          end_col = #entry.lines[1],
+          hl_group = "Directory",
+        })
+      end
+    end
+  end
+end
+
 local function capture_selection(target)
   if not state then
     return nil, nil
@@ -65,6 +85,9 @@ local function capture_selection(target)
   if entry and entry.kind == "commit" then
     selection.change_id = entry.change_id
     selection.offset = offset
+  elseif entry and entry.kind == "file" then
+    selection.change_id = entry.change_id
+    selection.path = entry.path
   end
 
   local view = vim.api.nvim_win_call(window, vim.fn.winsaveview)
@@ -81,7 +104,12 @@ local function restore_selection(target, next_state, selection, view)
   if selection and selection.change_id then
     local commit = log.find_commit(next_state.log, selection.change_id)
     if commit then
-      row = commit.line + math.min(selection.offset, #commit.lines - 1) + HEADER_LINE_COUNT
+      local file = selection.path and log.find_file(next_state.log, selection.change_id, selection.path)
+      if file then
+        row = file.line + HEADER_LINE_COUNT
+      else
+        row = commit.line + math.min(selection.offset or 0, #commit.lines - 1) + HEADER_LINE_COUNT
+      end
     end
   elseif selection then
     row = selection.row
@@ -98,13 +126,14 @@ local function restore_selection(target, next_state, selection, view)
     vim.api.nvim_win_call(window, function()
       vim.fn.winrestview(view)
     end)
-  else
-    vim.api.nvim_win_set_cursor(window, { row, column })
   end
+  vim.api.nvim_win_set_cursor(window, { row, column })
 end
 
-local function render(target, next_state)
-  local selection, view = capture_selection(target)
+local function render(target, next_state, selection, view)
+  if not selection and not view then
+    selection, view = capture_selection(target)
+  end
   local lines = {
     "repository: " .. next_state.root .. "  revset: " .. next_state.revset,
     "",
@@ -112,6 +141,7 @@ local function render(target, next_state)
   vim.list_extend(lines, next_state.log.lines)
   set_lines(target, lines)
   highlight_header(target, next_state.root, next_state.revset)
+  highlight_log(target, next_state.log)
   restore_selection(target, next_state, selection, view)
   state = next_state
 end
@@ -141,6 +171,45 @@ local function refresh()
   if buffer and vim.api.nvim_buf_is_valid(buffer) then
     load(buffer)
   end
+end
+
+local function toggle_fold()
+  if not buffer or not vim.api.nvim_buf_is_valid(buffer) or not state then
+    return
+  end
+
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local commit = log.entry_at_line(state.log, cursor[1] - HEADER_LINE_COUNT)
+  if not commit or commit.kind ~= "commit" then
+    return
+  end
+
+  if commit.loaded then
+    local selection, view = capture_selection(buffer)
+    commit.expanded = not commit.expanded
+    log.flatten(state.log)
+    render(buffer, state, selection, view)
+    return
+  end
+
+  local target = buffer
+  local current_state = state
+  repository.load_files(state.root, commit, function(files, err)
+    if target ~= buffer or current_state ~= state or not vim.api.nvim_buf_is_valid(target) then
+      return
+    end
+    if err then
+      vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
+      return
+    end
+
+    local selection, view = capture_selection(target)
+    commit.expanded = true
+    commit.files = files
+    commit.loaded = true
+    log.flatten(state.log)
+    render(target, state, selection, view)
+  end)
 end
 
 local function reset()
@@ -206,6 +275,14 @@ function M.open()
   vim.keymap.set("n", "<BS>", refresh, {
     buffer = buffer,
     desc = "Refresh Majjit",
+  })
+  vim.keymap.set("n", "<Tab>", toggle_fold, {
+    buffer = buffer,
+    desc = "Toggle Majjit fold",
+  })
+  vim.keymap.set("n", "za", toggle_fold, {
+    buffer = buffer,
+    desc = "Toggle Majjit fold",
   })
 
   load(buffer)

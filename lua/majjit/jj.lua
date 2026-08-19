@@ -34,6 +34,15 @@ function M.workspace_root(repository, callback)
   end)
 end
 
+function M.diff_summary(repository, change_id, callback)
+  return run(
+    repository,
+    { "diff", "--ignore-working-copy", "--summary", "--revisions", change_id },
+    { color = "never" },
+    callback
+  )
+end
+
 function M.log(repository, revset, template, callback)
   return run(
     repository,
