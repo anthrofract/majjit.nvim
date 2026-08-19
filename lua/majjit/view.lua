@@ -13,24 +13,13 @@ vim.api.nvim_set_hl(0, "MajjitDiffChange", {
   default = true,
 })
 
-local function highlight_header(view, root, revset)
-  local repository_label = "repository: "
-  local revset_label = "  revset: "
-  local root_start = #repository_label
-  local revset_label_start = root_start + #root
-  local revset_start = revset_label_start + #revset_label
+local function highlight_header(view, revset)
+  local revset_label = "revset: "
+  local revset_start = #revset_label
 
   vim.api.nvim_buf_set_extmark(view.buffer, view.namespace, 0, 0, {
-    end_col = root_start,
-    hl_group = "Label",
-  })
-  vim.api.nvim_buf_set_extmark(view.buffer, view.namespace, 0, root_start, {
-    end_col = revset_label_start,
-    hl_group = "String",
-  })
-  vim.api.nvim_buf_set_extmark(view.buffer, view.namespace, 0, revset_label_start, {
     end_col = revset_start,
-    hl_group = "Label",
+    hl_group = "Function",
   })
   vim.api.nvim_buf_set_extmark(view.buffer, view.namespace, 0, revset_start, {
     end_col = revset_start + #revset,
@@ -237,16 +226,12 @@ function View:render(next_state, selection, saved_view)
     selection, saved_view = self:capture_selection()
   end
   local lines = {
-    "repository: "
-      .. next_state.root
-      .. "  revset: "
-      .. next_state.revset
-      .. (self.ignore_immutable and "  --ignore-immutable" or ""),
+    "revset: " .. next_state.revset .. (self.ignore_immutable and "  --ignore-immutable" or ""),
     "",
   }
   vim.list_extend(lines, next_state.log.lines)
   self:set_lines(lines)
-  highlight_header(self, next_state.root, next_state.revset)
+  highlight_header(self, next_state.revset)
   highlight_log(self, next_state.log)
   restore_selection(self, next_state, selection, saved_view)
   self.state = next_state
