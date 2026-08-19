@@ -37,17 +37,24 @@ local function run(repository, args, opts, callback)
   return process
 end
 
+local function mutation(args)
+  return {
+    args = args,
+    output = "stderr",
+  }
+end
+
 function M.workspace_root(repository, callback)
   return run(repository, { "workspace", "root" }, { color = "never" }, function(output, err)
     callback(output and vim.trim(output), err)
   end)
 end
 
-function M.abandon(repository, change_id, flags, callback)
+function M.abandon(change_id, flags)
   local args = { "abandon" }
   vim.list_extend(args, flags)
   args[#args + 1] = change_id
-  return run(repository, args, { color = "never" }, callback)
+  return mutation(args)
 end
 
 function M.diff_summary(repository, change_id, callback)
@@ -68,8 +75,8 @@ function M.diff_file(repository, change_id, path, callback)
   )
 end
 
-function M.edit(repository, change_id, callback)
-  return run(repository, { "edit", change_id }, { color = "never" }, callback)
+function M.edit(change_id)
+  return mutation({ "edit", change_id })
 end
 
 function M.file_show(repository, change_id, path, callback)
@@ -81,8 +88,8 @@ function M.file_show(repository, change_id, path, callback)
   )
 end
 
-function M.git_fetch(repository, callback)
-  return run(repository, { "git", "fetch" }, { color = "never" }, callback)
+function M.git_fetch()
+  return mutation({ "git", "fetch" })
 end
 
 function M.log(repository, revset, template, callback)
@@ -94,15 +101,15 @@ function M.log(repository, revset, template, callback)
   )
 end
 
-function M.new_revision(repository, target, flags, callback)
+function M.new_revision(target, flags)
   local args = { "new" }
   vim.list_extend(args, flags)
   args[#args + 1] = target
-  return run(repository, args, { color = "never" }, callback)
+  return mutation(args)
 end
 
-function M.redo(repository, callback)
-  return run(repository, { "redo" }, { color = "never" }, callback)
+function M.redo()
+  return mutation({ "redo" })
 end
 
 function M.revision_targets(repository, revset, callback)
@@ -131,8 +138,33 @@ function M.revision_targets(repository, revset, callback)
   )
 end
 
-function M.undo(repository, callback)
-  return run(repository, { "undo" }, { color = "never" }, callback)
+function M.run_mutation(repository, command, callback)
+  local args = { "jj", "--color", "always", "--no-pager", "--repository", repository }
+  vim.list_extend(args, command.args)
+
+  local function on_exit(result)
+    callback({
+      code = result.code,
+      output = result[command.output],
+      signal = result.signal,
+      stderr = result.stderr,
+      stdout = result.stdout,
+    })
+  end
+
+  local ok, process = pcall(vim.system, args, { text = true }, vim.schedule_wrap(on_exit))
+  if not ok then
+    vim.schedule(function()
+      callback({ error = tostring(process) })
+    end)
+    return nil
+  end
+
+  return process
+end
+
+function M.undo()
+  return mutation({ "undo" })
 end
 
 return M

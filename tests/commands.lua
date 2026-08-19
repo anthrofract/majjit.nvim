@@ -1,4 +1,5 @@
 local help_module = require("majjit.commands.help")
+local output_module = require("majjit.commands.output")
 local session_module = require("majjit.commands.session")
 local tree_module = require("majjit.commands.tree")
 
@@ -360,6 +361,88 @@ assert(layout_config.width == vim.o.columns)
 assert(not layout_config.focusable)
 assert(vim.deep_equal(layout_config.border, { "─", "─", "─", "", "", "", "", "" }))
 layout_help:close()
+
+local command_output = output_module.new(function()
+  return vim.api.nvim_get_current_win()
+end, {
+  once = function() end,
+})
+command_output:start_sequence()
+command_output:start_command({ args = { "git", "fetch" } })
+assert(vim.deep_equal(vim.api.nvim_buf_get_lines(command_output.buffer, 0, -1, false), {
+  "❯ jj git fetch",
+  "",
+  "Running...",
+  "",
+}))
+command_output:finish_command({ code = 0, output = "Fetched remote\n" })
+command_output:start_command({ args = { "new", "trunk()" } })
+command_output:finish_command({ code = 0, output = "Working copy updated\nParent updated\n" })
+assert(vim.deep_equal(vim.api.nvim_buf_get_lines(command_output.buffer, 0, -1, false), {
+  "❯ jj git fetch",
+  "",
+  "Fetched remote",
+  "",
+  "❯ jj new trunk()",
+  "",
+  "Working copy updated",
+  "Parent updated",
+  "",
+}))
+local output_config = vim.api.nvim_win_get_config(command_output.window)
+assert(output_config.relative == "editor")
+assert(output_config.width == vim.o.columns)
+assert(not output_config.focusable)
+command_output:hide()
+assert(not command_output:is_open())
+assert(command_output:show())
+assert(command_output:is_open())
+local long_output = {}
+for i = 1, vim.o.lines + 10 do
+  long_output[#long_output + 1] = "Line " .. i
+end
+command_output:start_sequence()
+command_output:start_command({ args = { "log" } })
+command_output:finish_command({ code = 0, output = table.concat(long_output, "\n") })
+assert(vim.api.nvim_win_get_cursor(command_output.window)[1] == vim.api.nvim_buf_line_count(command_output.buffer))
+local command_output_buffer = command_output.buffer
+command_output:close()
+assert(not vim.api.nvim_buf_is_valid(command_output_buffer))
+
+local leave_buffer = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_win_set_buf(0, leave_buffer)
+local overlay = {
+  open = true,
+  show_count = 0,
+}
+function overlay:is_open()
+  return self.open
+end
+function overlay:hide()
+  self.open = false
+end
+function overlay:show()
+  self.open = true
+  self.show_count = self.show_count + 1
+end
+local leave_session = session_module.attach({
+  actions = {},
+  buffer = leave_buffer,
+  get_context = function()
+    return { capabilities = {} }
+  end,
+  get_window = function()
+    return vim.api.nvim_get_current_win()
+  end,
+  overlay = overlay,
+  tree = tree_module.compile(catalog({})),
+})
+leave_session:press("?")
+assert(not overlay.open)
+vim.api.nvim_win_set_buf(0, vim.api.nvim_create_buf(false, true))
+assert(not overlay.open)
+assert(overlay.show_count == 0)
+leave_session:detach()
 
 local lifecycle_buffer = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_win_set_buf(0, lifecycle_buffer)

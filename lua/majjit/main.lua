@@ -8,6 +8,7 @@ local HEADER_LINE_COUNT = 2
 local FOLD_MARKER_WIDTH = #"▸"
 local buffer
 local command_catalog = require("majjit.commands.catalog")
+local command_output
 local command_session
 local command_tree = require("majjit.commands.tree").compile(command_catalog)
 local commands = require("majjit.commands.session")
@@ -18,6 +19,7 @@ local log = require("majjit.log")
 local active_mutation
 local active_prompt_request
 local namespace = vim.api.nvim_create_namespace("majjit")
+local output_module = require("majjit.commands.output")
 local repository = require("majjit.repository")
 local state
 local user_window
@@ -373,31 +375,66 @@ local function open_file()
   end)
 end
 
-local function mutate(context, operation, select_current)
+local function mutate(context, command_list, select_current)
   if active_mutation then
     vim.notify("A repository operation is already running", vim.log.levels.WARN, { title = "Majjit" })
     return
   end
 
+  if command_list.args then
+    command_list = { command_list }
+  end
   repository.cancel()
   local target = buffer
-  local mutation = {}
+  local mutation = {
+    commands = command_list,
+    index = 0,
+    root = context.root or directory,
+  }
   active_mutation = mutation
-  mutation.process = operation(context.root or directory, function(_, err)
-    if active_mutation ~= mutation then
-      return
-    end
-    active_mutation = nil
-    if target ~= buffer or not target or not vim.api.nvim_buf_is_valid(target) then
-      return
-    end
-    if err then
-      vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
-      return
-    end
+  command_output:start_sequence()
+  if command_session then
+    command_session:update_mappings()
+  end
 
-    load(target, select_current and {} or nil)
-  end)
+  local function run_next()
+    mutation.index = mutation.index + 1
+    local command = mutation.commands[mutation.index]
+    command_output:start_command(command)
+    mutation.process = jj.run_mutation(mutation.root, command, function(result)
+      if active_mutation ~= mutation then
+        return
+      end
+
+      command_output:finish_command(result)
+      if result.error or result.code ~= 0 then
+        active_mutation = nil
+        if not command_output:is_open() then
+          local message = result.error
+          if not message or message == "" then
+            message = result.stderr
+          end
+          if not message or message == "" then
+            message = "jj exited with code " .. tostring(result.code)
+          end
+          message = vim.trim(message:gsub("\27%[[0-9;]*m", ""))
+          vim.notify(message, vim.log.levels.ERROR, { title = "Majjit" })
+        end
+        return
+      end
+      if mutation.index < #mutation.commands then
+        run_next()
+        return
+      end
+
+      active_mutation = nil
+      if target == buffer and target and vim.api.nvim_buf_is_valid(target) then
+        load(target, select_current and {} or nil)
+      end
+    end)
+  end
+
+  run_next()
 end
 
 local function select_revision_target(context, prompt, on_select)
@@ -407,6 +444,13 @@ local function select_revision_target(context, prompt, on_select)
   end
 
   local target = buffer
+  local restore_output = command_output and command_output:is_open()
+  if restore_output then
+    command_output:hide()
+    if command_session then
+      command_session:update_mappings()
+    end
+  end
   local request = {}
   active_prompt_request = request
   request.process = jj.revision_targets(context.root, context.state.revset, function(targets, err)
@@ -420,6 +464,10 @@ local function select_revision_target(context, prompt, on_select)
     end
     if err then
       active_prompt_request = nil
+      if restore_output then
+        command_output:show()
+        command_session:update_mappings()
+      end
       vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
       return
     end
@@ -430,6 +478,10 @@ local function select_revision_target(context, prompt, on_select)
       end
       active_prompt_request = nil
       if target ~= buffer or not target or not vim.api.nvim_buf_is_valid(target) or not selected then
+        if restore_output and target == buffer and target and vim.api.nvim_buf_is_valid(target) then
+          command_output:show()
+          command_session:update_mappings()
+        end
         return
       end
 
@@ -437,6 +489,10 @@ local function select_revision_target(context, prompt, on_select)
     end)
     if not ok then
       active_prompt_request = nil
+      if restore_output then
+        command_output:show()
+        command_session:update_mappings()
+      end
       vim.notify(tostring(select_err), vim.log.levels.ERROR, { title = "Majjit" })
     end
   end)
@@ -449,6 +505,13 @@ local function input_revsets(context)
   end
 
   local target = buffer
+  local restore_output = command_output and command_output:is_open()
+  if restore_output then
+    command_output:hide()
+    if command_session then
+      command_session:update_mappings()
+    end
+  end
   local request = {}
   active_prompt_request = request
   local ok, input_err = pcall(vim.ui.input, { prompt = "Revsets: " }, function(value)
@@ -457,24 +520,41 @@ local function input_revsets(context)
     end
     active_prompt_request = nil
     if target ~= buffer or not target or not vim.api.nvim_buf_is_valid(target) or not value then
+      if restore_output and target == buffer and target and vim.api.nvim_buf_is_valid(target) then
+        command_output:show()
+        command_session:update_mappings()
+      end
       return
     end
 
     value = vim.trim(value)
     if value == "" then
+      if restore_output then
+        command_output:show()
+        command_session:update_mappings()
+      end
       return
     end
-    mutate({ root = context.root }, function(root, callback)
-      return jj.new_revision(root, value, {}, callback)
-    end, true)
+    mutate({ root = context.root }, jj.new_revision(value, {}), true)
   end)
   if not ok then
     active_prompt_request = nil
+    if restore_output then
+      command_output:show()
+      command_session:update_mappings()
+    end
     vim.notify(tostring(input_err), vim.log.levels.ERROR, { title = "Majjit" })
   end
 end
 
 local function reset()
+  if active_mutation then
+    local mutation = active_mutation
+    active_mutation = nil
+    if mutation.process then
+      pcall(mutation.process.kill, mutation.process, 15)
+    end
+  end
   if command_session then
     local session = command_session
     command_session = nil
@@ -486,6 +566,10 @@ local function reset()
     if request.process then
       pcall(request.process.kill, request.process, 15)
     end
+  end
+  if command_output then
+    command_output:close()
+    command_output = nil
   end
   repository.cancel()
   buffer = nil
@@ -528,6 +612,7 @@ function M.open()
   vim.wo.cursorline = true
   vim.wo.number = false
   vim.wo.relativenumber = false
+  command_output = output_module.new(get_window, ansi)
 
   local target = buffer
   vim.api.nvim_create_autocmd("BufWipeout", {
@@ -545,74 +630,46 @@ function M.open()
   command_session = commands.attach({
     actions = {
       ["operation.redo"] = function(context)
-        mutate(context, jj.redo)
+        mutate(context, jj.redo())
       end,
       ["operation.undo"] = function(context)
-        mutate(context, jj.undo)
+        mutate(context, jj.undo())
       end,
       ["revision.abandon.selection"] = function(context)
-        mutate(context, function(root, callback)
-          return jj.abandon(root, context.commit.change_id, {}, callback)
-        end)
+        mutate(context, jj.abandon(context.commit.change_id, {}))
       end,
       ["revision.abandon.retain_bookmarks"] = function(context)
-        mutate(context, function(root, callback)
-          return jj.abandon(root, context.commit.change_id, { "--retain-bookmarks" }, callback)
-        end)
+        mutate(context, jj.abandon(context.commit.change_id, { "--retain-bookmarks" }))
       end,
       ["revision.abandon.restore_descendants"] = function(context)
-        mutate(context, function(root, callback)
-          return jj.abandon(root, context.commit.change_id, { "--restore-descendants" }, callback)
-        end)
+        mutate(context, jj.abandon(context.commit.change_id, { "--restore-descendants" }))
       end,
       ["revision.edit.selection"] = function(context)
-        mutate(context, function(root, callback)
-          return jj.edit(root, context.commit.change_id, callback)
-        end)
+        mutate(context, jj.edit(context.commit.change_id))
       end,
       ["revision.edit.target"] = function(context)
         select_revision_target(context, "Edit: ", function(selected)
-          mutate({ root = context.root }, function(root, callback)
-            return jj.edit(root, selected, callback)
-          end, true)
+          mutate({ root = context.root }, jj.edit(selected), true)
         end)
       end,
       ["revision.new.after"] = function(context)
-        mutate(context, function(root, callback)
-          return jj.new_revision(root, context.commit.change_id, {}, callback)
-        end, true)
+        mutate(context, jj.new_revision(context.commit.change_id, {}), true)
       end,
       ["revision.new.insert_after"] = function(context)
-        mutate(context, function(root, callback)
-          return jj.new_revision(root, context.commit.change_id, { "--insert-after" }, callback)
-        end, true)
+        mutate(context, jj.new_revision(context.commit.change_id, { "--insert-after" }), true)
       end,
       ["revision.new.insert_before"] = function(context)
-        mutate(context, function(root, callback)
-          return jj.new_revision(root, context.commit.change_id, { "--no-edit", "--insert-before" }, callback)
-        end, true)
+        mutate(context, jj.new_revision(context.commit.change_id, { "--no-edit", "--insert-before" }), true)
       end,
       ["revision.new.trunk"] = function(context)
-        mutate(context, function(root, callback)
-          return jj.new_revision(root, "trunk()", {}, callback)
-        end, true)
+        mutate(context, jj.new_revision("trunk()", {}), true)
       end,
       ["revision.new.trunk_sync"] = function(context)
-        mutate(context, function(root, callback)
-          return jj.git_fetch(root, function(_, fetch_err)
-            if fetch_err then
-              callback(nil, fetch_err)
-              return
-            end
-            jj.new_revision(root, "trunk()", {}, callback)
-          end)
-        end, true)
+        mutate(context, { jj.git_fetch(), jj.new_revision("trunk()", {}) }, true)
       end,
       ["revision.new.target"] = function(context)
         select_revision_target(context, "New after: ", function(selected)
-          mutate({ root = context.root }, function(root, callback)
-            return jj.new_revision(root, selected, {}, callback)
-          end, true)
+          mutate({ root = context.root }, jj.new_revision(selected, {}), true)
         end)
       end,
       ["revision.new.revsets"] = function(context)
@@ -637,6 +694,7 @@ function M.open()
     buffer = buffer,
     get_context = get_context,
     get_window = get_window,
+    overlay = command_output,
     tree = command_tree,
   })
 

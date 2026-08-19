@@ -44,6 +44,8 @@ function M.attach(opts)
     get_context = opts.get_context,
     help = help.new(opts.get_window),
     installed_keys = {},
+    overlay = opts.overlay,
+    restore_overlay = false,
     tree = opts.tree,
     workflow = nil,
   }, Session)
@@ -61,7 +63,7 @@ function M.attach(opts)
     buffer = opts.buffer,
     group = session.autocmd_group,
     callback = function()
-      session:cancel()
+      session:cancel(false)
     end,
   })
   vim.api.nvim_create_autocmd("BufWipeout", {
@@ -132,7 +134,7 @@ function Session:_apply_mappings()
   for _, key in ipairs(self.tree.controls.help.keys) do
     self:_map(key, self.tree.controls.help.label)
   end
-  if self.active ~= self.tree.root or self.help:is_open() then
+  if self.active ~= self.tree.root or self.help:is_open() or (self.overlay and self.overlay:is_open()) then
     for _, key in ipairs(self.tree.controls.cancel.keys) do
       self:_map(key, self.tree.controls.cancel.label)
     end
@@ -147,6 +149,10 @@ end
 
 function Session:_render_help()
   local was_open = self.help:is_open()
+  if not was_open and self.overlay and self.overlay:is_open() then
+    self.overlay:hide()
+    self.restore_overlay = true
+  end
   self.help:show(tree_module.help_entries(self.tree, self.active, self:_context()), self.error_message)
   if not was_open then
     self:_apply_mappings()
@@ -169,19 +175,32 @@ function Session:_show_error(message)
   self:_render_help()
 end
 
-function Session:_reset()
+function Session:_reset(restore_overlay)
   self.active = self.tree.root
   self.error_message = nil
   self.workflow = nil
   self.help:close()
+  if restore_overlay ~= false and self.restore_overlay and self.overlay then
+    self.overlay:show()
+  end
+  self.restore_overlay = false
   self:_apply_mappings()
 end
 
-function Session:cancel()
+function Session:cancel(restore_overlay)
   if self.detached then
     return
   end
-  self:_reset()
+  if self.active == self.tree.root and not self.help:is_open() and self.overlay and self.overlay:is_open() then
+    self.overlay:hide()
+    self:_apply_mappings()
+    return
+  end
+  self:_reset(restore_overlay)
+end
+
+function Session:update_mappings()
+  self:_apply_mappings()
 end
 
 function Session:_activate(node)
@@ -271,6 +290,7 @@ function Session:detach()
   self.detached = true
   self:_clear_mappings()
   self.help:close()
+  self.restore_overlay = false
   pcall(vim.api.nvim_del_augroup_by_id, self.autocmd_group)
 end
 
