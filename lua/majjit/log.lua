@@ -177,10 +177,31 @@ local function render_commit(commit)
 end
 
 local function render_file(file)
+  local fold = file.expanded and FOLD_OPEN or FOLD_CLOSED
   file.fold_column = #file.graph_indent
   file.content_column = file.fold_column + #FOLD_CLOSED + 1
   return {
-    file.graph_indent .. FOLD_CLOSED .. " " .. file.status_label .. " " .. file.description,
+    file.graph_indent .. fold .. " " .. file.status_label .. " " .. file.description,
+  }
+end
+
+local function render_hunk(hunk)
+  local fold = hunk.expanded and FOLD_OPEN or FOLD_CLOSED
+  local red_count = hunk.red_end == 0 and 0 or hunk.red_end - hunk.red_start + 1
+  local green_count = hunk.green_end == 0 and 0 or hunk.green_end - hunk.green_start + 1
+  local header = ("@@ -%d,%d +%d,%d @@"):format(hunk.red_start, red_count, hunk.green_start, green_count)
+  hunk.fold_column = #hunk.graph_indent
+  return {
+    hunk.graph_indent .. fold .. " \27[35m" .. header .. "\27[0m",
+  }
+end
+
+local function render_diff_line(line)
+  local clean = strip_ansi(line.ansi)
+  line.changed = clean:sub(1, 1) == "+" or clean:sub(1, 1) == "-"
+  line.content_column = #line.graph_indent + 2
+  return {
+    line.graph_indent .. "  " .. line.ansi,
   }
 end
 
@@ -205,6 +226,16 @@ function M.flatten(revision_log)
       if item.expanded then
         for _, file in ipairs(item.files) do
           append(file, render_file(file))
+          if file.expanded then
+            for _, hunk in ipairs(file.hunks) do
+              append(hunk, render_hunk(hunk))
+              if hunk.expanded then
+                for _, line in ipairs(hunk.children) do
+                  append(line, render_diff_line(line))
+                end
+              end
+            end
+          end
         end
       end
     else
@@ -277,6 +308,33 @@ end
 function M.find_file(revision_log, change_id, path)
   for _, entry in ipairs(revision_log.entries) do
     if entry.kind == "file" and entry.change_id == change_id and entry.path == path then
+      return entry
+    end
+  end
+end
+
+function M.find_hunk(revision_log, change_id, path, hunk_index)
+  for _, entry in ipairs(revision_log.entries) do
+    if
+      entry.kind == "hunk"
+      and entry.change_id == change_id
+      and entry.path == path
+      and entry.index == hunk_index
+    then
+      return entry
+    end
+  end
+end
+
+function M.find_diff_line(revision_log, change_id, path, hunk_index, line_index)
+  for _, entry in ipairs(revision_log.entries) do
+    if
+      entry.kind == "diff_line"
+      and entry.change_id == change_id
+      and entry.path == path
+      and entry.hunk_index == hunk_index
+      and entry.index == line_index
+    then
       return entry
     end
   end

@@ -93,4 +93,17 @@ function M.load_files(root, commit, callback)
   end)
 end
 
+function M.load_hunks(root, file, callback)
+  M.cancel()
+  local current_generation = generation
+
+  active_process = diff.load_file(root, file, function(hunks, err)
+    if current_generation ~= generation then
+      return
+    end
+    active_process = nil
+    callback(hunks, err)
+  end)
+end
+
 return M

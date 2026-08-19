@@ -13,6 +13,11 @@ local namespace = vim.api.nvim_create_namespace("majjit")
 local repository = require("majjit.repository")
 local state
 
+vim.api.nvim_set_hl(0, "MajjitDiffChange", {
+  bold = true,
+  default = true,
+})
+
 local function set_lines(target, lines)
   vim.bo[target].modifiable = true
   vim.api.nvim_buf_set_lines(target, 0, -1, false, lines)
@@ -48,7 +53,7 @@ end
 
 local function highlight_log(target, revision_log)
   for _, entry in ipairs(revision_log.entries) do
-    if entry.kind == "commit" or entry.kind == "file" then
+    if entry.kind == "commit" or entry.kind == "file" or entry.kind == "hunk" then
       local row = entry.line + HEADER_LINE_COUNT - 1
       vim.api.nvim_buf_set_extmark(target, namespace, row, entry.fold_column, {
         end_col = entry.fold_column + FOLD_MARKER_WIDTH,
@@ -61,6 +66,13 @@ local function highlight_log(target, revision_log)
           hl_group = "Directory",
         })
       end
+    elseif entry.kind == "diff_line" and entry.changed then
+      local row = entry.line + HEADER_LINE_COUNT - 1
+      vim.api.nvim_buf_set_extmark(target, namespace, row, entry.content_column, {
+        end_col = #entry.lines[1],
+        hl_group = "MajjitDiffChange",
+        hl_mode = "combine",
+      })
     end
   end
 end
@@ -88,6 +100,15 @@ local function capture_selection(target)
   elseif entry and entry.kind == "file" then
     selection.change_id = entry.change_id
     selection.path = entry.path
+  elseif entry and entry.kind == "hunk" then
+    selection.change_id = entry.change_id
+    selection.hunk_index = entry.index
+    selection.path = entry.path
+  elseif entry and entry.kind == "diff_line" then
+    selection.change_id = entry.change_id
+    selection.hunk_index = entry.hunk_index
+    selection.line_index = entry.index
+    selection.path = entry.path
   end
 
   local view = vim.api.nvim_win_call(window, vim.fn.winsaveview)
@@ -105,10 +126,21 @@ local function restore_selection(target, next_state, selection, view)
     local commit = log.find_commit(next_state.log, selection.change_id)
     if commit then
       local file = selection.path and log.find_file(next_state.log, selection.change_id, selection.path)
-      if file then
-        row = file.line + HEADER_LINE_COUNT
-      else
+      if not file then
         row = commit.line + math.min(selection.offset or 0, #commit.lines - 1) + HEADER_LINE_COUNT
+      elseif selection.hunk_index then
+        local hunk = log.find_hunk(next_state.log, selection.change_id, selection.path, selection.hunk_index)
+        local diff_line = selection.line_index
+          and log.find_diff_line(
+            next_state.log,
+            selection.change_id,
+            selection.path,
+            selection.hunk_index,
+            selection.line_index
+          )
+        row = (diff_line and diff_line.line or hunk and hunk.line or file.line) + HEADER_LINE_COUNT
+      else
+        row = file.line + HEADER_LINE_COUNT
       end
     end
   elseif selection then
@@ -173,20 +205,28 @@ local function refresh()
   end
 end
 
-local function toggle_fold()
+local function toggle_fold(window)
   if not buffer or not vim.api.nvim_buf_is_valid(buffer) or not state then
     return
   end
 
-  local cursor = vim.api.nvim_win_get_cursor(0)
-  local commit = log.entry_at_line(state.log, cursor[1] - HEADER_LINE_COUNT)
-  if not commit or commit.kind ~= "commit" then
+  local cursor = vim.api.nvim_win_get_cursor(window or 0)
+  local entry = log.entry_at_line(state.log, cursor[1] - HEADER_LINE_COUNT)
+  if not entry or entry.kind == "diff_line" or entry.kind == "text" then
     return
   end
 
-  if commit.loaded then
+  if entry.kind == "hunk" then
     local selection, view = capture_selection(buffer)
-    commit.expanded = not commit.expanded
+    entry.expanded = not entry.expanded
+    log.flatten(state.log)
+    render(buffer, state, selection, view)
+    return
+  end
+
+  if entry.loaded then
+    local selection, view = capture_selection(buffer)
+    entry.expanded = not entry.expanded
     log.flatten(state.log)
     render(buffer, state, selection, view)
     return
@@ -194,7 +234,8 @@ local function toggle_fold()
 
   local target = buffer
   local current_state = state
-  repository.load_files(state.root, commit, function(files, err)
+  local load_children = entry.kind == "commit" and repository.load_files or repository.load_hunks
+  load_children(state.root, entry, function(children, err)
     if target ~= buffer or current_state ~= state or not vim.api.nvim_buf_is_valid(target) then
       return
     end
@@ -204,12 +245,35 @@ local function toggle_fold()
     end
 
     local selection, view = capture_selection(target)
-    commit.expanded = true
-    commit.files = files
-    commit.loaded = true
+    entry.expanded = true
+    entry.loaded = true
+    if entry.kind == "commit" then
+      entry.files = children
+    else
+      entry.hunks = children
+    end
     log.flatten(state.log)
     render(target, state, selection, view)
   end)
+end
+
+local function right_click()
+  local mouse = vim.fn.getmousepos()
+  if
+    mouse.winid == 0
+    or mouse.line == 0
+    or not vim.api.nvim_win_is_valid(mouse.winid)
+    or vim.api.nvim_win_get_buf(mouse.winid) ~= buffer
+    or mouse.line > vim.api.nvim_buf_line_count(buffer)
+  then
+    return
+  end
+
+  local line = vim.api.nvim_buf_get_lines(buffer, mouse.line - 1, mouse.line, false)[1]
+  local column = math.min(math.max(mouse.column - 1, 0), #line)
+  vim.api.nvim_set_current_win(mouse.winid)
+  vim.api.nvim_win_set_cursor(mouse.winid, { mouse.line, column })
+  toggle_fold(mouse.winid)
 end
 
 local function reset()
@@ -284,6 +348,12 @@ function M.open()
     buffer = buffer,
     desc = "Toggle Majjit fold",
   })
+  for _, mouse_event in ipairs({ "<RightMouse>", "<2-RightMouse>", "<3-RightMouse>", "<4-RightMouse>" }) do
+    vim.keymap.set("n", mouse_event, right_click, {
+      buffer = buffer,
+      desc = "Select and toggle Majjit fold",
+    })
+  end
 
   load(buffer)
 end

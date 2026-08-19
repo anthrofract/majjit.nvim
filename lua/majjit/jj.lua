@@ -43,6 +43,15 @@ function M.diff_summary(repository, change_id, callback)
   )
 end
 
+function M.diff_file(repository, change_id, path, callback)
+  return run(
+    repository,
+    { "diff", "--ignore-working-copy", "--color-words", "--revisions", change_id, path },
+    { color = "always" },
+    callback
+  )
+end
+
 function M.log(repository, revset, template, callback)
   return run(
     repository,
