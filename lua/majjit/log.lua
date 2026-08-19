@@ -141,8 +141,25 @@ function M.parse(output, revset)
   }, nil
 end
 
+function M.entry_at_line(revision_log, line)
+  for index, entry in ipairs(revision_log.entries) do
+    local offset = line - entry.line
+    if offset >= 0 and offset < #entry.lines then
+      return entry, offset, index
+    end
+  end
+end
+
+function M.find_commit(revision_log, change_id)
+  for _, entry in ipairs(revision_log.entries) do
+    if entry.kind == "commit" and entry.change_id == change_id then
+      return entry
+    end
+  end
+end
+
 function M.load(repository, revset, callback)
-  jj.log(repository, revset, TEMPLATE, function(output, err)
+  return jj.log(repository, revset, TEMPLATE, function(output, err)
     if err then
       callback(nil, err)
       return

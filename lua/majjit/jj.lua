@@ -17,22 +17,25 @@ local function run(repository, args, opts, callback)
     callback(nil, message)
   end
 
-  local ok, err = pcall(vim.system, command, { text = true }, vim.schedule_wrap(on_exit))
+  local ok, process = pcall(vim.system, command, { text = true }, vim.schedule_wrap(on_exit))
   if not ok then
     vim.schedule(function()
-      callback(nil, tostring(err))
+      callback(nil, tostring(process))
     end)
+    return nil
   end
+
+  return process
 end
 
 function M.workspace_root(repository, callback)
-  run(repository, { "workspace", "root" }, { color = "never" }, function(output, err)
+  return run(repository, { "workspace", "root" }, { color = "never" }, function(output, err)
     callback(output and vim.trim(output), err)
   end)
 end
 
 function M.log(repository, revset, template, callback)
-  run(
+  return run(
     repository,
     { "log", "--template", template, "--revisions", revset },
     { color = "always" },
