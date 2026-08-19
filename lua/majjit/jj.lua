@@ -52,6 +52,15 @@ function M.diff_file(repository, change_id, path, callback)
   )
 end
 
+function M.file_show(repository, change_id, path, callback)
+  return run(
+    repository,
+    { "file", "show", "--revision", change_id, path },
+    { color = "never" },
+    callback
+  )
+end
+
 function M.log(repository, revset, template, callback)
   return run(
     repository,

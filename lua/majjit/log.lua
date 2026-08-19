@@ -313,6 +313,18 @@ function M.find_file(revision_log, change_id, path)
   end
 end
 
+function M.file_for_entry(revision_log, entry)
+  if not entry then
+    return
+  end
+  if entry.kind == "file" then
+    return entry
+  end
+  if entry.kind == "hunk" or entry.kind == "diff_line" then
+    return M.find_file(revision_log, entry.change_id, entry.path)
+  end
+end
+
 function M.find_hunk(revision_log, change_id, path, hunk_index)
   for _, entry in ipairs(revision_log.entries) do
     if

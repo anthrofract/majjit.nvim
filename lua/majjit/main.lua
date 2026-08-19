@@ -8,10 +8,12 @@ local HEADER_LINE_COUNT = 2
 local FOLD_MARKER_WIDTH = #"▸"
 local buffer
 local directory
+local jump = require("majjit.jump")
 local log = require("majjit.log")
 local namespace = vim.api.nvim_create_namespace("majjit")
 local repository = require("majjit.repository")
 local state
+local user_window
 
 vim.api.nvim_set_hl(0, "MajjitDiffChange", {
   bold = true,
@@ -276,11 +278,60 @@ local function right_click()
   toggle_fold(mouse.winid)
 end
 
+local function open_file()
+  if not buffer or not vim.api.nvim_buf_is_valid(buffer) or not state then
+    return
+  end
+
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local entry = log.entry_at_line(state.log, cursor[1] - HEADER_LINE_COUNT)
+  local file = log.file_for_entry(state.log, entry)
+  if not file then
+    return
+  end
+
+  local commit = log.find_commit(state.log, file.change_id)
+  if not commit then
+    return
+  end
+
+  repository.cancel()
+  if commit.current_working_copy then
+    local _, err = jump.open_working_file(state.root, file.path, user_window, buffer)
+    if err then
+      vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
+    end
+    return
+  end
+
+  if jump.focus_historical_file(commit.commit_id, file.path) then
+    return
+  end
+
+  local target = buffer
+  local current_state = state
+  repository.load_file(state.root, file.change_id, file.path, function(contents, err)
+    if target ~= buffer or current_state ~= state or not vim.api.nvim_buf_is_valid(target) then
+      return
+    end
+    if err then
+      vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
+      return
+    end
+
+    local _, open_err = jump.open_historical_file(commit.commit_id, file.path, contents)
+    if open_err then
+      vim.notify(open_err, vim.log.levels.ERROR, { title = "Majjit" })
+    end
+  end)
+end
+
 local function reset()
   repository.cancel()
   buffer = nil
   directory = nil
   state = nil
+  user_window = nil
 end
 
 local function close()
@@ -304,6 +355,7 @@ function M.open()
 
   directory = vim.fn.getcwd()
   state = nil
+  user_window = vim.api.nvim_get_current_win()
 
   vim.cmd.tabnew()
   buffer = vim.api.nvim_get_current_buf()
@@ -347,6 +399,10 @@ function M.open()
   vim.keymap.set("n", "za", toggle_fold, {
     buffer = buffer,
     desc = "Toggle Majjit fold",
+  })
+  vim.keymap.set("n", "<CR>", open_file, {
+    buffer = buffer,
+    desc = "Open Majjit file",
   })
   for _, mouse_event in ipairs({ "<RightMouse>", "<2-RightMouse>", "<3-RightMouse>", "<4-RightMouse>" }) do
     vim.keymap.set("n", mouse_event, right_click, {

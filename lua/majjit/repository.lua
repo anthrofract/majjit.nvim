@@ -106,4 +106,17 @@ function M.load_hunks(root, file, callback)
   end)
 end
 
+function M.load_file(root, change_id, path, callback)
+  M.cancel()
+  local current_generation = generation
+
+  active_process = jj.file_show(root, change_id, path, function(contents, err)
+    if current_generation ~= generation then
+      return
+    end
+    active_process = nil
+    callback(contents, err)
+  end)
+end
+
 return M
