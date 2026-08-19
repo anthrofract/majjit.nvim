@@ -41,7 +41,7 @@ local function build_columns(entries)
           {
             text = start == 1 and group.name or "",
             highlights = start == 1 and {
-              { group = "Title", start = 0, finish = #group.name },
+              { group = "Function", start = 0, finish = #group.name },
             } or {},
           },
         },

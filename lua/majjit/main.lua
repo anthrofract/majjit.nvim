@@ -13,7 +13,9 @@ local command_tree = require("majjit.commands.tree").compile(command_catalog)
 local commands = require("majjit.commands.session")
 local directory
 local jump = require("majjit.jump")
+local jj = require("majjit.jj")
 local log = require("majjit.log")
+local active_mutation
 local namespace = vim.api.nvim_create_namespace("majjit")
 local repository = require("majjit.repository")
 local state
@@ -222,7 +224,7 @@ local function render(target, next_state, selection, view)
   end
 end
 
-local function load(target)
+local function load(target, selection)
   repository.load(state and state.root or directory, function(next_state, err)
     if target ~= buffer or not vim.api.nvim_buf_is_valid(target) then
       return
@@ -239,18 +241,18 @@ local function load(target)
       return
     end
 
-    render(target, next_state)
+    render(target, next_state, selection)
   end)
 end
 
 local function refresh()
-  if buffer and vim.api.nvim_buf_is_valid(buffer) then
+  if not active_mutation and buffer and vim.api.nvim_buf_is_valid(buffer) then
     load(buffer)
   end
 end
 
 local function toggle_fold(window)
-  if not buffer or not vim.api.nvim_buf_is_valid(buffer) or not state then
+  if active_mutation or not buffer or not vim.api.nvim_buf_is_valid(buffer) or not state then
     return
   end
 
@@ -321,7 +323,7 @@ local function right_click()
 end
 
 local function open_file()
-  if not buffer or not vim.api.nvim_buf_is_valid(buffer) or not state then
+  if active_mutation or not buffer or not vim.api.nvim_buf_is_valid(buffer) or not state then
     return
   end
 
@@ -365,6 +367,33 @@ local function open_file()
     if open_err then
       vim.notify(open_err, vim.log.levels.ERROR, { title = "Majjit" })
     end
+  end)
+end
+
+local function mutate(context, operation, select_current)
+  if active_mutation then
+    vim.notify("A repository operation is already running", vim.log.levels.WARN, { title = "Majjit" })
+    return
+  end
+
+  repository.cancel()
+  local target = buffer
+  local mutation = {}
+  active_mutation = mutation
+  mutation.process = operation(context.root or directory, function(_, err)
+    if active_mutation ~= mutation then
+      return
+    end
+    active_mutation = nil
+    if target ~= buffer or not target or not vim.api.nvim_buf_is_valid(target) then
+      return
+    end
+    if err then
+      vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
+      return
+    end
+
+    load(target, select_current and {} or nil)
   end)
 end
 
@@ -431,6 +460,27 @@ function M.open()
 
   command_session = commands.attach({
     actions = {
+      ["operation.redo"] = function(context)
+        mutate(context, jj.redo)
+      end,
+      ["operation.undo"] = function(context)
+        mutate(context, jj.undo)
+      end,
+      ["revision.abandon.selection"] = function(context)
+        mutate(context, function(root, callback)
+          return jj.abandon(root, context.commit.change_id, callback)
+        end)
+      end,
+      ["revision.edit.selection"] = function(context)
+        mutate(context, function(root, callback)
+          return jj.edit(root, context.commit.change_id, callback)
+        end)
+      end,
+      ["revision.new.after"] = function(context)
+        mutate(context, function(root, callback)
+          return jj.new_revision(root, context.commit.change_id, callback)
+        end, true)
+      end,
       ["view.close"] = function()
         close()
       end,

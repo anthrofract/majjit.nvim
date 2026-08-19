@@ -34,6 +34,10 @@ function M.workspace_root(repository, callback)
   end)
 end
 
+function M.abandon(repository, change_id, callback)
+  return run(repository, { "abandon", change_id }, { color = "never" }, callback)
+end
+
 function M.diff_summary(repository, change_id, callback)
   return run(
     repository,
@@ -52,6 +56,10 @@ function M.diff_file(repository, change_id, path, callback)
   )
 end
 
+function M.edit(repository, change_id, callback)
+  return run(repository, { "edit", change_id }, { color = "never" }, callback)
+end
+
 function M.file_show(repository, change_id, path, callback)
   return run(
     repository,
@@ -68,6 +76,18 @@ function M.log(repository, revset, template, callback)
     { color = "always" },
     callback
   )
+end
+
+function M.new_revision(repository, change_id, callback)
+  return run(repository, { "new", change_id }, { color = "never" }, callback)
+end
+
+function M.redo(repository, callback)
+  return run(repository, { "redo" }, { color = "never" }, callback)
+end
+
+function M.undo(repository, callback)
+  return run(repository, { "undo" }, { color = "never" }, callback)
 end
 
 return M

@@ -15,6 +15,78 @@ return {
   },
   commands = {
     {
+      kind = "menu",
+      id = "revision.abandon",
+      keys = { "a" },
+      group = "Commands",
+      label = "Abandon",
+      children = {
+        {
+          kind = "action",
+          id = "revision.abandon.selection",
+          keys = { "a" },
+          label = "Selection",
+          requires = { "commit" },
+          unavailable = "Requires a commit",
+        },
+      },
+    },
+    {
+      kind = "menu",
+      id = "revision.edit",
+      keys = { "e" },
+      group = "Commands",
+      label = "Edit",
+      children = {
+        {
+          kind = "action",
+          id = "revision.edit.selection",
+          keys = { "e" },
+          label = "Selection",
+          requires = { "commit" },
+          unavailable = "Requires a commit",
+        },
+      },
+    },
+    {
+      kind = "menu",
+      id = "revision.new",
+      keys = { "n" },
+      group = "Commands",
+      label = "New",
+      children = {
+        {
+          kind = "action",
+          id = "revision.new.after",
+          keys = { "n" },
+          label = "After selection",
+          requires = { "commit" },
+          unavailable = "Requires a commit",
+        },
+      },
+    },
+    {
+      kind = "menu",
+      id = "operation.undo_redo",
+      keys = { "u" },
+      group = "Commands",
+      label = "Undo/Redo",
+      children = {
+        {
+          kind = "action",
+          id = "operation.undo",
+          keys = { "u" },
+          label = "Undo last operation",
+        },
+        {
+          kind = "action",
+          id = "operation.redo",
+          keys = { "r" },
+          label = "Redo last operation",
+        },
+      },
+    },
+    {
       kind = "action",
       id = "view.close",
       keys = { "q" },
