@@ -69,8 +69,11 @@ function Prompt:_error(request, err)
   vim.notify(tostring(err), vim.log.levels.ERROR, { title = "Majjit" })
 end
 
-function Prompt:_input(request, prompt, callback)
-  local ok, input_err = pcall(vim.ui.input, { prompt = prompt }, function(value)
+function Prompt:_input(request, opts, callback)
+  local ok, input_err = pcall(vim.ui.input, {
+    default = opts.default,
+    prompt = opts.prompt,
+  }, function(value)
     if not self:_valid(request) then
       return
     end
@@ -97,7 +100,7 @@ end
 function Prompt:input(opts, callback)
   local request = self:_begin()
   if request then
-    self:_input(request, opts.prompt, callback)
+    self:_input(request, opts, callback)
   end
 end
 
@@ -117,7 +120,7 @@ function Prompt:select(opts, callback)
       return
     end
     if #items == 0 then
-      self:_input(request, opts.input_prompt or opts.prompt, callback)
+      self:_input(request, { prompt = opts.input_prompt or opts.prompt }, callback)
       return
     end
 

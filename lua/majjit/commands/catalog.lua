@@ -46,6 +46,29 @@ return {
     },
     {
       kind = "menu",
+      id = "revision.describe",
+      keys = { "d" },
+      group = "Commands",
+      label = "Describe",
+      children = {
+        {
+          kind = "action",
+          id = "revision.describe.inline",
+          keys = { "d" },
+          label = "Selection",
+          requires = { "commit" },
+        },
+        {
+          kind = "action",
+          id = "revision.describe.editor",
+          keys = { "D" },
+          label = "Selection in editor",
+          requires = { "commit" },
+        },
+      },
+    },
+    {
+      kind = "menu",
       id = "revision.edit",
       keys = { "e" },
       group = "Commands",

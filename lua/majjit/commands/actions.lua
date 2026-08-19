@@ -74,6 +74,12 @@ function M.new(workflow, close)
     ["revision.abandon.restore_descendants"] = function(context)
       workflow:mutate(context, jj.abandon(context.commit.change_id, { "--restore-descendants" }))
     end,
+    ["revision.describe.editor"] = function(context)
+      workflow:describe_in_editor(context)
+    end,
+    ["revision.describe.inline"] = function(context)
+      workflow:describe_inline(context)
+    end,
     ["revision.edit.selection"] = function(context)
       workflow:mutate(context, jj.edit(context.commit.change_id))
     end,

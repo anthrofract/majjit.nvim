@@ -7,6 +7,7 @@ local ansi = require("baleia").setup({
 local active_session
 local actions = require("majjit.commands.actions")
 local command_catalog = require("majjit.commands.catalog")
+local editor_module = require("majjit.commands.editor")
 local command_tree = require("majjit.commands.tree").compile(command_catalog)
 local command_session = require("majjit.commands.session")
 local jj = require("majjit.jj")
@@ -26,6 +27,10 @@ local function reset(session)
   if session.commands then
     session.commands:detach()
     session.commands = nil
+  end
+  if session.editor then
+    session.editor:close()
+    session.editor = nil
   end
   if session.prompt then
     session.prompt:cancel()
@@ -73,6 +78,7 @@ function M.open()
     closed = false,
     commands = nil,
     cwd = cwd,
+    editor = nil,
     operation = nil,
     output = nil,
     prompt = nil,
@@ -93,6 +99,9 @@ function M.open()
   session.output = output_module.new(function()
     return session.view:get_window()
   end, ansi)
+  session.editor = editor_module.new(function()
+    return session.view:get_window()
+  end)
   session.prompt = prompt_module.new({
     can_start = function()
       return not session.closed and session.operation == nil

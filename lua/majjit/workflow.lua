@@ -75,7 +75,7 @@ function Workflow:_run_command(operation, repository_path, command, show_output)
   elseif show_output then
     session.output:show()
   end
-  session.output:start_command(command, show_output)
+  session.output:start_command(command.args or command, show_output)
   if session.commands then
     session.commands:update_mappings()
   end
@@ -341,14 +341,14 @@ function Workflow:open_file()
   end)
 end
 
-function Workflow:mutate(context, command_list, select_current, append_output)
+function Workflow:mutate(context, command_list, select_current, append_output, on_complete)
   local session = self.session
-  if type(command_list[1]) == "string" then
+  if command_list.args or type(command_list[1]) == "string" then
     command_list = { command_list }
   end
   local repository_path = context.root or session.cwd
   local buffer = session.view.buffer
-  local selection = select_current and {} or nil
+  local selection = type(select_current) == "table" and select_current or select_current and {} or nil
   return self:_start_operation(function(operation)
     if append_output and session.output:has_output() then
       session.output:show()
@@ -361,7 +361,7 @@ function Workflow:mutate(context, command_list, select_current, append_output)
       if not command_succeeded(result) and jj.is_stale_error(result) then
         local recovery = self:_repair_workspace(operation, repository_path, true)
         if not command_succeeded(recovery) then
-          return { failure = recovery }
+          return { failure = recovery, succeeded = false }
         end
         changed = true
         result = self:_run_command(operation, repository_path, command, true)
@@ -371,21 +371,24 @@ function Workflow:mutate(context, command_list, select_current, append_output)
         if changed then
           next_state = self:_load_repository(operation, repository_path, true, false)
         end
-        return { failure = result, state = next_state }
+        return { failure = result, state = next_state, succeeded = false }
       end
       changed = true
     end
     local next_state, err = self:_load_repository(operation, repository_path, true, true)
     if err then
-      return nil, err
+      return { succeeded = true }, err
     end
-    return { state = next_state }
+    return { state = next_state, succeeded = true }
   end, function(result, err)
     if not vim.api.nvim_buf_is_valid(buffer) then
       return
     end
     if err then
       vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
+      if on_complete then
+        on_complete(result, err)
+      end
       return
     end
     if result.state then
@@ -395,6 +398,71 @@ function Workflow:mutate(context, command_list, select_current, append_output)
       local message = vim.trim(mutation_error(result.failure):gsub("\27%[[0-9;]*m", ""))
       vim.notify(message, vim.log.levels.ERROR, { title = "Majjit" })
     end
+    if on_complete then
+      on_complete(result, nil)
+    end
+  end)
+end
+
+function Workflow:describe_inline(context)
+  local root = context.root
+  local change_id = context.commit.change_id
+  local description = context.commit.description or ""
+  self:input("Describe: ", function(value)
+    self:mutate({ root = root }, jj.describe(change_id, value), { change_id = change_id })
+  end, description)
+end
+
+function Workflow:describe_in_editor(context)
+  local session = self.session
+  if session.editor:is_open() then
+    session.editor:focus()
+    return
+  end
+
+  local root = context.root
+  local change_id = context.commit.change_id
+  self:_start_operation(function(operation)
+    local template, err = operation:await(function(callback)
+      return jj.draft_description_template(root, callback)
+    end)
+    if err then
+      return nil, err
+    end
+    return operation:await(function(callback)
+      return jj.draft_description(root, change_id, vim.trim(template), callback)
+    end)
+  end, function(contents, err)
+    if err then
+      vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
+      return
+    end
+    session.editor:open({
+      change_id = change_id,
+      contents = contents,
+      startinsert = context.commit.description == nil,
+      on_submit = function(value, complete)
+        if session.operation then
+          vim.notify("A repository operation is already running", vim.log.levels.WARN, { title = "Majjit" })
+          complete(false)
+          return
+        end
+        self:mutate(
+          { root = root },
+          jj.describe(change_id, value),
+          { change_id = change_id },
+          false,
+          function(result)
+            local succeeded = result and result.succeeded == true
+            if not succeeded and result and result.failure and session.output:is_open() then
+              local message = vim.trim(mutation_error(result.failure):gsub("\27%[[0-9;]*m", ""))
+              vim.notify(message, vim.log.levels.ERROR, { title = "Majjit" })
+            end
+            complete(succeeded)
+          end
+        )
+      end,
+    })
   end)
 end
 
@@ -479,8 +547,8 @@ function Workflow:select_visible_commit(kind)
   end)
 end
 
-function Workflow:input(prompt, callback)
-  self.session.prompt:input({ prompt = prompt }, callback)
+function Workflow:input(prompt, callback, default)
+  self.session.prompt:input({ default = default, prompt = prompt }, callback)
 end
 
 function Workflow:input_revset(context)

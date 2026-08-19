@@ -18,10 +18,10 @@ local function base_command(repository_path, color)
   return command
 end
 
-local function execute(repository_path, args, color, callback)
+local function execute(repository_path, args, color, callback, stdin)
   local command = base_command(repository_path, color)
   vim.list_extend(command, args)
-  local ok, process = pcall(vim.system, command, { text = true }, vim.schedule_wrap(callback))
+  local ok, process = pcall(vim.system, command, { stdin = stdin, text = true }, vim.schedule_wrap(callback))
   if not ok then
     vim.schedule(function()
       callback({ error = tostring(process) })
@@ -118,6 +118,31 @@ function M.diff_file(root, change_id, path, callback)
   )
 end
 
+function M.describe(change_id, description)
+  return {
+    args = { "describe", change_id, "--stdin" },
+    stdin = description,
+  }
+end
+
+function M.draft_description(root, change_id, template, callback)
+  return run(
+    root,
+    { "log", "--ignore-working-copy", "--no-graph", "--revisions", change_id, "--template", template },
+    { color = "never" },
+    callback
+  )
+end
+
+function M.draft_description_template(root, callback)
+  return run(
+    root,
+    { "config", "get", "templates.draft_commit_description" },
+    { color = "never" },
+    callback
+  )
+end
+
 function M.edit(change_id)
   return { "edit", change_id }
 end
@@ -194,7 +219,7 @@ function M.revision_targets(root, revset, callback)
 end
 
 function M.run_mutation(repository_path, command, callback)
-  return execute(repository_path, command, "always", callback)
+  return execute(repository_path, command.args or command, "always", callback, command.stdin)
 end
 
 function M.set_ignore_immutable(enabled)
