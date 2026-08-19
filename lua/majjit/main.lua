@@ -70,6 +70,7 @@ function M.open()
   vim.bo[buffer].buftype = "nofile"
   vim.bo[buffer].filetype = "majjit"
   vim.bo[buffer].swapfile = false
+  vim.wo.cursorline = true
 
   set_lines(buffer, { "Loading..." })
 
@@ -95,9 +96,14 @@ function M.open()
       "repository: " .. state.root .. "  revset: " .. state.revset,
       "",
     }
-    vim.list_extend(lines, state.log_lines)
+    vim.list_extend(lines, state.log.lines)
     set_lines(target, lines)
     highlight_header(target, state.root, state.revset)
+
+    local windows = vim.fn.win_findbuf(target)
+    if windows[1] and state.log.current_line then
+      vim.api.nvim_win_set_cursor(windows[1], { state.log.current_line + 2, 0 })
+    end
   end)
 end
 

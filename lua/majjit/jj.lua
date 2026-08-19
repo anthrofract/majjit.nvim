@@ -31,10 +31,10 @@ function M.workspace_root(repository, callback)
   end)
 end
 
-function M.log(repository, revset, callback)
+function M.log(repository, revset, template, callback)
   run(
     repository,
-    { "log", "--template", "builtin_log_compact", "--revisions", revset },
+    { "log", "--template", template, "--revisions", revset },
     { color = "always" },
     callback
   )

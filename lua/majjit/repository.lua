@@ -1,4 +1,5 @@
 local jj = require("majjit.jj")
+local log = require("majjit.log")
 
 local M = {}
 
@@ -23,7 +24,7 @@ function M.load(cwd, callback)
       return
     end
 
-    jj.log(root, DEFAULT_REVSET, function(output, log_err)
+    log.load(root, DEFAULT_REVSET, function(revision_log, log_err)
       if current_generation ~= generation then
         return
       end
@@ -35,7 +36,7 @@ function M.load(cwd, callback)
       callback({
         root = root,
         revset = DEFAULT_REVSET,
-        log_lines = vim.split(vim.trim(output), "\n", { plain = true }),
+        log = revision_log,
       }, nil)
     end)
   end)
