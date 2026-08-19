@@ -2,6 +2,12 @@ local M = {}
 
 local buffer
 
+local function set_lines(target, lines)
+  vim.bo[target].modifiable = true
+  vim.api.nvim_buf_set_lines(target, 0, -1, false, lines)
+  vim.bo[target].modifiable = false
+end
+
 local function close()
   if #vim.api.nvim_list_tabpages() > 1 then
     vim.cmd.tabclose()
@@ -19,6 +25,8 @@ function M.open()
     end
   end
 
+  local cwd = vim.fn.getcwd()
+
   vim.cmd.tabnew()
   buffer = vim.api.nvim_get_current_buf()
 
@@ -28,13 +36,28 @@ function M.open()
   vim.bo[buffer].filetype = "majjit"
   vim.bo[buffer].swapfile = false
 
-  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, { "Majjit" })
-  vim.bo[buffer].modifiable = false
+  set_lines(buffer, { "Loading..." })
 
   vim.keymap.set("n", "q", close, {
     buffer = buffer,
     desc = "Close Majjit",
   })
+
+  local target = buffer
+  require("majjit.jj").workspace_root(cwd, function(root, err)
+    if target ~= buffer or not vim.api.nvim_buf_is_valid(target) then
+      return
+    end
+
+    if err then
+      local lines = vim.split(err, "\n", { plain = true })
+      lines[1] = "Error: " .. lines[1]
+      set_lines(target, lines)
+      return
+    end
+
+    set_lines(target, { "repository: " .. root })
+  end)
 end
 
 return M
