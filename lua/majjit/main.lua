@@ -1,6 +1,7 @@
 local M = {}
 
 local buffer
+local repository = require("majjit.repository")
 
 local function set_lines(target, lines)
   vim.bo[target].modifiable = true
@@ -9,6 +10,8 @@ local function set_lines(target, lines)
 end
 
 local function close()
+  repository.cancel()
+
   if #vim.api.nvim_list_tabpages() > 1 then
     vim.cmd.tabclose()
   else
@@ -44,8 +47,8 @@ function M.open()
   })
 
   local target = buffer
-  require("majjit.jj").workspace_root(cwd, function(root, err)
-    if target ~= buffer or not vim.api.nvim_buf_is_valid(target) then
+  repository.load(cwd, function(state, err)
+    if not vim.api.nvim_buf_is_valid(target) then
       return
     end
 
@@ -56,7 +59,12 @@ function M.open()
       return
     end
 
-    set_lines(target, { "repository: " .. root })
+    local lines = {
+      "repository: " .. state.root .. "  revset: " .. state.revset,
+      "",
+    }
+    vim.list_extend(lines, state.log_lines)
+    set_lines(target, lines)
   end)
 end
 

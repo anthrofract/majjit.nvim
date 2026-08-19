@@ -1,21 +1,12 @@
 local M = {}
 
 local function run(repository, args, callback)
-  local command = { "jj", "--color", "never", "--repository", repository }
+  local command = { "jj", "--color", "never", "--no-pager", "--repository", repository }
   vim.list_extend(command, args)
 
-  local ok, err = pcall(vim.system, command, { text = true }, vim.schedule_wrap(callback))
-  if not ok then
-    vim.schedule(function()
-      callback({ code = -1, stderr = tostring(err) })
-    end)
-  end
-end
-
-function M.workspace_root(repository, callback)
-  run(repository, { "workspace", "root" }, function(result)
+  local function on_exit(result)
     if result.code == 0 then
-      callback(vim.trim(result.stdout), nil)
+      callback(result.stdout, nil)
       return
     end
 
@@ -24,7 +15,24 @@ function M.workspace_root(repository, callback)
       message = ("jj exited with code %d"):format(result.code)
     end
     callback(nil, message)
+  end
+
+  local ok, err = pcall(vim.system, command, { text = true }, vim.schedule_wrap(on_exit))
+  if not ok then
+    vim.schedule(function()
+      callback(nil, tostring(err))
+    end)
+  end
+end
+
+function M.workspace_root(repository, callback)
+  run(repository, { "workspace", "root" }, function(output, err)
+    callback(output and vim.trim(output), err)
   end)
+end
+
+function M.log(repository, revset, callback)
+  run(repository, { "log", "--template", "builtin_log_compact", "--revisions", revset }, callback)
 end
 
 return M
