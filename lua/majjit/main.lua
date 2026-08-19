@@ -7,6 +7,10 @@ local ansi = require("baleia").setup({
 local HEADER_LINE_COUNT = 2
 local FOLD_MARKER_WIDTH = #"▸"
 local buffer
+local command_catalog = require("majjit.commands.catalog")
+local command_session
+local command_tree = require("majjit.commands.tree").compile(command_catalog)
+local commands = require("majjit.commands.session")
 local directory
 local jump = require("majjit.jump")
 local log = require("majjit.log")
@@ -19,6 +23,41 @@ vim.api.nvim_set_hl(0, "MajjitDiffChange", {
   bold = true,
   default = true,
 })
+
+local function get_window()
+  if not buffer or not vim.api.nvim_buf_is_valid(buffer) then
+    return
+  end
+  local current = vim.api.nvim_get_current_win()
+  if vim.api.nvim_win_get_buf(current) == buffer then
+    return current
+  end
+  return vim.fn.win_findbuf(buffer)[1]
+end
+
+local function get_context()
+  local context = {
+    buffer = buffer,
+    capabilities = {},
+    root = state and state.root,
+    state = state,
+    window = get_window(),
+  }
+  if not state or not context.window then
+    return context
+  end
+
+  local cursor = vim.api.nvim_win_get_cursor(context.window)
+  context.entry = log.entry_at_line(state.log, cursor[1] - HEADER_LINE_COUNT)
+  context.commit = log.commit_for_entry(state.log, context.entry)
+  context.file = log.file_for_entry(state.log, context.entry)
+  context.capabilities.commit = context.commit ~= nil
+  context.capabilities.file = context.file ~= nil
+  context.capabilities.foldable = context.entry ~= nil
+    and (context.entry.kind == "commit" or context.entry.kind == "file" or context.entry.kind == "hunk")
+  context.capabilities.working_copy = context.commit ~= nil and context.commit.current_working_copy
+  return context
+end
 
 local function set_lines(target, lines)
   vim.bo[target].modifiable = true
@@ -178,6 +217,9 @@ local function render(target, next_state, selection, view)
   highlight_log(target, next_state.log)
   restore_selection(target, next_state, selection, view)
   state = next_state
+  if command_session then
+    command_session:update_help()
+  end
 end
 
 local function load(target)
@@ -327,6 +369,11 @@ local function open_file()
 end
 
 local function reset()
+  if command_session then
+    local session = command_session
+    command_session = nil
+    session:detach()
+  end
   repository.cancel()
   buffer = nil
   directory = nil
@@ -380,36 +427,29 @@ function M.open()
 
   set_lines(buffer, { "Loading..." })
 
-  vim.keymap.set("n", "q", close, {
+  command_session = commands.attach({
+    actions = {
+      ["view.close"] = function()
+        close()
+      end,
+      ["view.open"] = function()
+        open_file()
+      end,
+      ["view.refresh"] = function()
+        refresh()
+      end,
+      ["view.right_click"] = function()
+        right_click()
+      end,
+      ["view.toggle"] = function()
+        toggle_fold()
+      end,
+    },
     buffer = buffer,
-    desc = "Close Majjit",
+    get_context = get_context,
+    get_window = get_window,
+    tree = command_tree,
   })
-  vim.keymap.set("n", "<C-r>", refresh, {
-    buffer = buffer,
-    desc = "Refresh Majjit",
-  })
-  vim.keymap.set("n", "<BS>", refresh, {
-    buffer = buffer,
-    desc = "Refresh Majjit",
-  })
-  vim.keymap.set("n", "<Tab>", toggle_fold, {
-    buffer = buffer,
-    desc = "Toggle Majjit fold",
-  })
-  vim.keymap.set("n", "za", toggle_fold, {
-    buffer = buffer,
-    desc = "Toggle Majjit fold",
-  })
-  vim.keymap.set("n", "<CR>", open_file, {
-    buffer = buffer,
-    desc = "Open Majjit file",
-  })
-  for _, mouse_event in ipairs({ "<RightMouse>", "<2-RightMouse>", "<3-RightMouse>", "<4-RightMouse>" }) do
-    vim.keymap.set("n", mouse_event, right_click, {
-      buffer = buffer,
-      desc = "Select and toggle Majjit fold",
-    })
-  end
 
   load(buffer)
 end

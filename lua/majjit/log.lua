@@ -305,6 +305,18 @@ function M.find_commit(revision_log, change_id)
   end
 end
 
+function M.commit_for_entry(revision_log, entry)
+  if not entry then
+    return
+  end
+  if entry.kind == "commit" then
+    return entry
+  end
+  if entry.change_id then
+    return M.find_commit(revision_log, entry.change_id)
+  end
+end
+
 function M.find_file(revision_log, change_id, path)
   for _, entry in ipairs(revision_log.entries) do
     if entry.kind == "file" and entry.change_id == change_id and entry.path == path then

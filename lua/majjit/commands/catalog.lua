@@ -1,0 +1,63 @@
+return {
+  controls = {
+    cancel = {
+      id = "commands.cancel",
+      keys = { "<Esc>" },
+      hidden = true,
+      label = "Cancel",
+    },
+    help = {
+      id = "commands.help",
+      keys = { "?" },
+      group = "General",
+      label = "Help",
+    },
+  },
+  commands = {
+    {
+      kind = "action",
+      id = "view.close",
+      keys = { "q" },
+      group = "General",
+      label = "Close",
+      available_during_session = true,
+    },
+    {
+      kind = "action",
+      id = "view.open",
+      keys = { "<CR>" },
+      group = "General",
+      label = "Open",
+      requires = { "file" },
+      unavailable = "Requires a file",
+    },
+    {
+      kind = "action",
+      id = "view.refresh",
+      keys = { "<C-r>", "<BS>" },
+      group = "General",
+      label = "Refresh",
+      available_during_session = true,
+    },
+    {
+      kind = "action",
+      id = "view.toggle",
+      keys = { "<Tab>", "za" },
+      group = "General",
+      label = "Toggle fold",
+      requires = { "foldable" },
+      unavailable = "Requires a fold",
+      available_during_session = true,
+      preserve_session = true,
+    },
+    {
+      kind = "action",
+      id = "view.right_click",
+      keys = { "<RightMouse>", "<2-RightMouse>", "<3-RightMouse>", "<4-RightMouse>" },
+      hidden = true,
+      label = "Select and toggle fold",
+      available_during_session = true,
+      preserve_session = true,
+    },
+  },
+}

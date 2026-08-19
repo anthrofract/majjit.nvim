@@ -8,3 +8,5 @@
 !lua/**
 !plugin/
 !plugin/**
+!tests/
+!tests/**
