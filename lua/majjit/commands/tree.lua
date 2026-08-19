@@ -41,6 +41,26 @@ local function normalize_keys(value, id)
   return keys
 end
 
+local function add_child(parent, child, scope, overlap)
+  parent.children[#parent.children + 1] = child
+  for _, key in ipairs(child.keys) do
+    for existing_key, existing in pairs(parent.children_by_key) do
+      assert(
+        not keys_overlap(existing_key, key),
+        ("%s '%s' and '%s' have %s '%s' and '%s'"):format(
+          scope,
+          existing.id,
+          child.id,
+          overlap,
+          existing_key,
+          key
+        )
+      )
+    end
+    parent.children_by_key[key] = child
+  end
+end
+
 local function compile_node(spec, ids)
   assert(type(spec.id) == "string" and spec.id ~= "", "Command id is required")
   assert(not ids[spec.id], ("Duplicate command id '%s'"):format(spec.id))
@@ -63,21 +83,7 @@ local function compile_node(spec, ids)
   node.children_by_key = {}
   for _, child_spec in ipairs(spec.children) do
     local child = compile_node(child_spec, ids)
-    node.children[#node.children + 1] = child
-    for _, key in ipairs(child.keys) do
-      for existing_key, existing in pairs(node.children_by_key) do
-        assert(
-          not keys_overlap(existing_key, key),
-          ("Commands '%s' and '%s' have overlapping sibling keys '%s' and '%s'"):format(
-            existing.id,
-            child.id,
-            existing_key,
-            key
-          )
-        )
-      end
-      node.children_by_key[key] = child
-    end
+    add_child(node, child, "Commands", "overlapping sibling keys")
   end
 
   return node
@@ -106,21 +112,7 @@ function M.compile(catalog)
 
   for _, spec in ipairs(catalog.commands or {}) do
     local child = compile_node(spec, ids)
-    root.children[#root.children + 1] = child
-    for _, key in ipairs(child.keys) do
-      for existing_key, existing in pairs(root.children_by_key) do
-        assert(
-          not keys_overlap(existing_key, key),
-          ("Root commands '%s' and '%s' have overlapping keys '%s' and '%s'"):format(
-            existing.id,
-            child.id,
-            existing_key,
-            key
-          )
-        )
-      end
-      root.children_by_key[key] = child
-    end
+    add_child(root, child, "Root commands", "overlapping keys")
   end
 
   local controls = {}

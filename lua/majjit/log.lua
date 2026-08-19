@@ -372,8 +372,8 @@ function M.current_commit(revision_log)
   end
 end
 
-function M.load(repository, revset, callback)
-  return jj.log(repository, revset, TEMPLATE, function(output, err)
+function M.load(root, revset, callback)
+  return jj.log(root, revset, TEMPLATE, function(output, err)
     if err then
       callback(nil, err)
       return

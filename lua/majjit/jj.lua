@@ -10,16 +10,16 @@ change_id.shortest(8) ++ "\n"
   ++ working_copies ++ "\n"
 ]=]
 
-local function base_command(repository, color)
-  local command = { "jj", "--color", color, "--no-pager", "--repository", repository }
+local function base_command(repository_path, color)
+  local command = { "jj", "--color", color, "--no-pager", "--repository", repository_path }
   if ignore_immutable then
     command[#command + 1] = "--ignore-immutable"
   end
   return command
 end
 
-local function execute(repository, args, color, callback)
-  local command = base_command(repository, color)
+local function execute(repository_path, args, color, callback)
+  local command = base_command(repository_path, color)
   vim.list_extend(command, args)
   local ok, process = pcall(vim.system, command, { text = true }, vim.schedule_wrap(callback))
   if not ok then
@@ -31,8 +31,8 @@ local function execute(repository, args, color, callback)
   return process
 end
 
-local function run(repository, args, opts, callback)
-  return execute(repository, args, opts.color, function(result)
+local function run(repository_path, args, opts, callback)
+  return execute(repository_path, args, opts.color, function(result)
     if result.error then
       callback(nil, result.error)
       return
@@ -76,8 +76,8 @@ local function strip_ansi(value)
   return (value:gsub("\27%].-\27\\", ""))
 end
 
-function M.workspace_root(repository, callback)
-  return run(repository, { "workspace", "root" }, { color = "never" }, function(output, err)
+function M.workspace_root(cwd, callback)
+  return run(cwd, { "workspace", "root" }, { color = "never" }, function(output, err)
     callback(output and vim.trim(output), err)
   end)
 end
@@ -89,9 +89,9 @@ function M.abandon(change_id, flags)
   return args
 end
 
-function M.bookmark_names(repository, callback)
+function M.bookmark_names(root, callback)
   return run(
-    repository,
+    root,
     { "bookmark", "list", "--all-remotes", "--template", 'name ++ "\\n"' },
     { color = "never" },
     function(output, err)
@@ -100,18 +100,18 @@ function M.bookmark_names(repository, callback)
   )
 end
 
-function M.diff_summary(repository, change_id, callback)
+function M.diff_summary(root, change_id, callback)
   return run(
-    repository,
+    root,
     { "diff", "--ignore-working-copy", "--summary", "--revisions", change_id },
     { color = "never" },
     callback
   )
 end
 
-function M.diff_file(repository, change_id, path, callback)
+function M.diff_file(root, change_id, path, callback)
   return run(
-    repository,
+    root,
     { "diff", "--ignore-working-copy", "--color-words", "--revisions", change_id, path },
     { color = "always" },
     callback
@@ -122,9 +122,9 @@ function M.edit(change_id)
   return { "edit", change_id }
 end
 
-function M.file_show(repository, change_id, path, callback)
+function M.file_show(root, change_id, path, callback)
   return run(
-    repository,
+    root,
     { "file", "show", "--revision", change_id, path },
     { color = "never" },
     callback
@@ -139,17 +139,17 @@ function M.git_push(args)
   return git_mutation("push", args)
 end
 
-function M.git_remote_names(repository, callback)
-  return run(repository, { "git", "remote", "list" }, { color = "never" }, function(output, err)
+function M.git_remote_names(root, callback)
+  return run(root, { "git", "remote", "list" }, { color = "never" }, function(output, err)
     callback(output and parse_lines(output, function(line)
       return line:match("^%s*(%S+)")
     end) or nil, err)
   end)
 end
 
-function M.log(repository, revset, template, callback)
+function M.log(root, revset, template, callback)
   return run(
-    repository,
+    root,
     { "log", "--template", template, "--revisions", revset },
     { color = "always" },
     callback
@@ -177,9 +177,9 @@ function M.redo()
   return { "redo" }
 end
 
-function M.revision_targets(repository, revset, callback)
+function M.revision_targets(root, revset, callback)
   return run(
-    repository,
+    root,
     { "log", "--no-graph", "--revisions", revset, "--template", REVISION_TARGET_TEMPLATE },
     { color = "never" },
     function(output, err)
@@ -193,8 +193,8 @@ function M.revision_targets(repository, revset, callback)
   )
 end
 
-function M.run_mutation(repository, command, callback)
-  return execute(repository, command, "always", callback)
+function M.run_mutation(repository_path, command, callback)
+  return execute(repository_path, command, "always", callback)
 end
 
 function M.set_ignore_immutable(enabled)

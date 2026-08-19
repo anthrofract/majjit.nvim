@@ -64,8 +64,8 @@ function M.parse_summary(output, change_id, graph_indent)
   return files, nil
 end
 
-function M.load_summary(repository, change_id, graph_indent, callback)
-  return jj.diff_summary(repository, change_id, function(output, err)
+function M.load_summary(root, change_id, graph_indent, callback)
+  return jj.diff_summary(root, change_id, function(output, err)
     if err then
       callback(nil, err)
       return
@@ -203,8 +203,8 @@ function M.parse_file(output, change_id, path, graph_indent)
   return hunks, nil
 end
 
-function M.load_file(repository, file, callback)
-  return jj.diff_file(repository, file.change_id, file.path, function(output, err)
+function M.load_file(root, file, callback)
+  return jj.diff_file(root, file.change_id, file.path, function(output, err)
     if err then
       callback(nil, err)
       return

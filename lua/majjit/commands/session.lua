@@ -110,18 +110,14 @@ function Session:_apply_mappings()
   end
   self:_clear_mappings()
 
-  if self.active == self.tree.root then
-    for _, node in ipairs(self.tree.root.children) do
-      for _, key in ipairs(node.keys) do
-        self:_map(key, node.label)
-      end
+  for _, node in ipairs(self.tree.root.children) do
+    local available = self.active == self.tree.root or node.available_during_session
+    local description = available and node.label or "Invalid Majjit command key"
+    for _, key in ipairs(node.keys) do
+      self:_map(key, description)
     end
-  else
-    for _, node in ipairs(self.tree.root.children) do
-      for _, key in ipairs(node.keys) do
-        self:_map(key, node.available_during_session and node.label or "Invalid Majjit command key")
-      end
-    end
+  end
+  if self.active ~= self.tree.root then
     for _, node in ipairs(self.active.children) do
       for _, key in ipairs(node.keys) do
         self:_map(key, node.label)

@@ -291,9 +291,6 @@ local prompt_output = {
 function prompt_output:is_open()
   return self.open
 end
-function prompt_output:has_output()
-  return true
-end
 function prompt_output:hide()
   self.open = false
 end
