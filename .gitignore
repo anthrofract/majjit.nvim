@@ -1,0 +1,10 @@
+# Ignore everything by default
+*
+
+!.gitignore
+!LICENSE
+!README.md
+!lua/
+!lua/**
+!plugin/
+!plugin/**
