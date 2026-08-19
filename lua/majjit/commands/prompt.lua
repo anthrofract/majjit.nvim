@@ -121,7 +121,10 @@ function Prompt:select(opts, callback)
       return
     end
 
-    local ok, select_err = pcall(vim.ui.select, items, { prompt = opts.prompt }, function(selected)
+    local ok, select_err = pcall(vim.ui.select, items, {
+      format_item = opts.format_item,
+      prompt = opts.prompt,
+    }, function(selected)
       if not self:_valid(request) then
         return
       end

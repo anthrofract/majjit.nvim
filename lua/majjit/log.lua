@@ -288,6 +288,48 @@ function M.parse(output, revset)
   return revision_log, nil
 end
 
+local selection_values = {
+  bookmark = function(commit)
+    return commit.bookmarks
+  end,
+  description = function(commit)
+    return commit.description and { commit.description } or {}
+  end,
+  tag = function(commit)
+    return commit.tags
+  end,
+  target = function(commit)
+    local values = { commit.change_id, commit.commit_id }
+    vim.list_extend(values, commit.bookmarks)
+    vim.list_extend(values, commit.tags)
+    vim.list_extend(values, commit.workspaces)
+    return values
+  end,
+}
+
+function M.selection_candidates(revision_log, kind)
+  local values_for_commit = assert(selection_values[kind], "Invalid selection kind: " .. tostring(kind))
+  local candidates = {}
+  for _, commit in ipairs(revision_log.items) do
+    if commit.kind == "commit" then
+      for _, label in ipairs(values_for_commit(commit)) do
+        candidates[#candidates + 1] = {
+          change_id = commit.change_id,
+          label = label,
+          order = #candidates + 1,
+        }
+      end
+    end
+  end
+  table.sort(candidates, function(left, right)
+    if left.label == right.label then
+      return left.order < right.order
+    end
+    return left.label > right.label
+  end)
+  return candidates
+end
+
 function M.entry_at_line(revision_log, line)
   for index, entry in ipairs(revision_log.entries) do
     local offset = line - entry.line

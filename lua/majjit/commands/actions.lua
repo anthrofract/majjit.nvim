@@ -117,6 +117,18 @@ function M.new(workflow, close)
     ["view.right_click"] = function()
       workflow:right_click()
     end,
+    ["view.select.bookmark"] = function()
+      workflow:select_visible_commit("bookmark")
+    end,
+    ["view.select.description"] = function()
+      workflow:select_visible_commit("description")
+    end,
+    ["view.select.tag"] = function()
+      workflow:select_visible_commit("tag")
+    end,
+    ["view.select.target"] = function()
+      workflow:select_visible_commit("target")
+    end,
     ["view.toggle"] = function()
       workflow:toggle_fold()
     end,

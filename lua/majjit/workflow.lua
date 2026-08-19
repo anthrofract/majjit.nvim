@@ -453,6 +453,32 @@ function Workflow:select_revision_target(context, prompt, callback)
   end, callback)
 end
 
+function Workflow:select_visible_commit(kind)
+  local session = self.session
+  local state = session.view.state
+  if not state then
+    return
+  end
+
+  local candidates = log.selection_candidates(state.log, kind)
+  if #candidates == 0 then
+    return
+  end
+  session.prompt:select({
+    format_item = function(candidate)
+      return candidate.label
+    end,
+    load = function(callback)
+      callback(candidates, nil)
+    end,
+    prompt = "Select: ",
+  }, function(candidate)
+    if session.view.state ~= state or not session.view:focus_commit(candidate.change_id) then
+      vim.notify("Selection is no longer visible", vim.log.levels.WARN, { title = "Majjit" })
+    end
+  end)
+end
+
 function Workflow:input(prompt, callback)
   self.session.prompt:input({ prompt = prompt }, callback)
 end

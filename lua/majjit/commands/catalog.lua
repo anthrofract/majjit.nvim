@@ -258,6 +258,43 @@ return {
     },
     {
       kind = "menu",
+      id = "view.select",
+      keys = { "/" },
+      group = "Commands",
+      label = "Select",
+      children = {
+        {
+          kind = "action",
+          id = "view.select.target",
+          keys = { "/" },
+          label = "Target",
+          requires = { "repository" },
+        },
+        {
+          kind = "action",
+          id = "view.select.bookmark",
+          keys = { "b" },
+          label = "Bookmark",
+          requires = { "repository" },
+        },
+        {
+          kind = "action",
+          id = "view.select.description",
+          keys = { "d" },
+          label = "Description",
+          requires = { "repository" },
+        },
+        {
+          kind = "action",
+          id = "view.select.tag",
+          keys = { "t" },
+          label = "Tag",
+          requires = { "repository" },
+        },
+      },
+    },
+    {
+      kind = "menu",
       id = "operation.undo_redo",
       keys = { "u" },
       group = "Commands",

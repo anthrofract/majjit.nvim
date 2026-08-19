@@ -184,6 +184,16 @@ function View:entry_at_cursor(window)
   return log.entry_at_line(self.state.log, cursor[1] - HEADER_LINE_COUNT)
 end
 
+function View:focus_commit(change_id)
+  local window = self:get_window()
+  local commit = self.state and log.find_commit(self.state.log, change_id)
+  if not window or not commit then
+    return false
+  end
+  vim.api.nvim_win_set_cursor(window, { commit.line + HEADER_LINE_COUNT, 0 })
+  return true
+end
+
 function View:capture_selection()
   if not self.state then
     return nil, nil
