@@ -413,6 +413,8 @@ function M.open()
   vim.bo[buffer].filetype = "majjit"
   vim.bo[buffer].swapfile = false
   vim.wo.cursorline = true
+  vim.wo.number = false
+  vim.wo.relativenumber = false
 
   local target = buffer
   vim.api.nvim_create_autocmd("BufWipeout", {
