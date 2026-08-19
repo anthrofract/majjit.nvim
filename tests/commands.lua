@@ -428,10 +428,17 @@ assert(not vim.api.nvim_buf_is_valid(command_output_buffer))
 
 local prompt_output = {
   open = true,
+  revision = 0,
   show_count = 0,
 }
 function prompt_output:is_open()
   return self.open
+end
+function prompt_output:has_output()
+  return true
+end
+function prompt_output:version()
+  return self.revision
 end
 function prompt_output:hide()
   self.open = false

@@ -73,6 +73,12 @@ local function parse_lines(output, transform)
   return lines
 end
 
+local function strip_ansi(value)
+  value = value:gsub("\27%[[0-9;?]*[ -/]*[@-~]", "")
+  value = value:gsub("\27%].-\7", "")
+  return (value:gsub("\27%].-\27\\", ""))
+end
+
 function M.workspace_root(repository, callback)
   return run(repository, { "workspace", "root" }, { color = "never" }, function(output, err)
     callback(output and vim.trim(output), err)
@@ -153,6 +159,16 @@ function M.log(repository, revset, template, callback)
   )
 end
 
+function M.is_stale_error(value)
+  if type(value) == "table" then
+    if value.code == 0 or value.error then
+      return false
+    end
+    value = value.stderr
+  end
+  return type(value) == "string" and strip_ansi(value):find("Run `jj workspace update%-stale` to ") ~= nil
+end
+
 function M.new_revision(target, flags)
   local args = { "new" }
   vim.list_extend(args, flags)
@@ -211,6 +227,10 @@ end
 
 function M.undo()
   return mutation({ "undo" })
+end
+
+function M.workspace_update_stale()
+  return mutation({ "workspace", "update-stale" })
 end
 
 return M

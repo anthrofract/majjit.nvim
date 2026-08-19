@@ -19,10 +19,12 @@ local jj = require("majjit.jj")
 local log = require("majjit.log")
 local ignore_immutable = false
 local active_mutation
+local mutate
 local namespace = vim.api.nvim_create_namespace("majjit")
 local output_module = require("majjit.commands.output")
 local prompt_module = require("majjit.commands.prompt")
 local repository = require("majjit.repository")
+local run_read
 local state
 local user_window
 
@@ -242,8 +244,11 @@ local function render(target, next_state, selection, view)
   end
 end
 
-local function load(target, selection)
-  repository.load(state and state.root or directory, function(next_state, err)
+local function load(target, selection, allow_recovery, on_complete)
+  local root = state and state.root or directory
+  run_read(root, function(callback)
+    repository.load(root, callback)
+  end, function(next_state, err)
     if target ~= buffer or not vim.api.nvim_buf_is_valid(target) then
       return
     end
@@ -256,11 +261,20 @@ local function load(target, selection)
         lines[1] = "Error: " .. lines[1]
         set_lines(target, lines)
       end
+      if on_complete then
+        on_complete(err)
+      end
       return
     end
 
     render(target, next_state, selection)
-  end)
+    if on_complete then
+      on_complete(nil)
+    end
+  end, {
+    allow_recovery = allow_recovery,
+    refresh_after_recovery = false,
+  })
 end
 
 local function refresh()
@@ -299,12 +313,17 @@ local function toggle_fold(window)
   local target = buffer
   local current_state = state
   local load_children = entry.kind == "commit" and repository.load_files or repository.load_hunks
-  load_children(state.root, entry, function(children, err)
+  run_read(state.root, function(callback)
+    load_children(state.root, entry, callback)
+  end, function(children, err, recovered)
     if target ~= buffer or current_state ~= state or not vim.api.nvim_buf_is_valid(target) then
       return
     end
     if err then
       vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
+      return
+    end
+    if recovered then
       return
     end
 
@@ -372,12 +391,17 @@ local function open_file()
 
   local target = buffer
   local current_state = state
-  repository.load_file(state.root, file.change_id, file.path, function(contents, err)
+  run_read(state.root, function(callback)
+    repository.load_file(state.root, file.change_id, file.path, callback)
+  end, function(contents, err, recovered)
     if target ~= buffer or current_state ~= state or not vim.api.nvim_buf_is_valid(target) then
       return
     end
     if err then
       vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
+      return
+    end
+    if recovered then
       return
     end
 
@@ -388,10 +412,22 @@ local function open_file()
   end)
 end
 
-local function mutate(context, command_list, select_current)
+local function mutation_error(result)
+  local message = result.error
+  if not message or message == "" then
+    message = result.stderr
+  end
+  if not message or message == "" then
+    message = "jj exited with code " .. tostring(result.code)
+  end
+  return message
+end
+
+mutate = function(context, command_list, select_current, opts)
+  opts = opts or {}
   if active_mutation then
     vim.notify("A repository operation is already running", vim.log.levels.WARN, { title = "Majjit" })
-    return
+    return false
   end
 
   if command_list.args then
@@ -401,19 +437,74 @@ local function mutate(context, command_list, select_current)
   local target = buffer
   local mutation = {
     commands = command_list,
-    index = 0,
+    index = 1,
+    recovery_changed = false,
     root = context.root or directory,
   }
   active_mutation = mutation
-  command_output:start_sequence()
+  if opts.append_output and command_output:has_output() then
+    if opts.show_output ~= false then
+      command_output:show()
+    end
+  else
+    command_output:start_sequence(opts.show_output)
+  end
   if command_session then
     command_session:update_mappings()
   end
 
+  local function finish_failure(result)
+    active_mutation = nil
+    if
+      mutation.recovery_changed
+      and opts.refresh ~= false
+      and target == buffer
+      and target
+      and vim.api.nvim_buf_is_valid(target)
+    then
+      load(target, select_current and {} or nil, false)
+    end
+    if opts.on_failure then
+      opts.on_failure(result)
+    elseif not command_output:is_open() then
+      local message = vim.trim(mutation_error(result):gsub("\27%[[0-9;]*m", ""))
+      vim.notify(message, vim.log.levels.ERROR, { title = "Majjit" })
+    end
+  end
+
+  local function finish_success()
+    if opts.on_success and opts.hold_active then
+      opts.on_success(function()
+        if active_mutation == mutation then
+          active_mutation = nil
+        end
+      end)
+    elseif opts.on_success then
+      active_mutation = nil
+      opts.on_success()
+    elseif opts.refresh ~= false and target == buffer and target and vim.api.nvim_buf_is_valid(target) then
+      active_mutation = nil
+      load(target, select_current and {} or nil)
+    else
+      active_mutation = nil
+    end
+  end
+
+  local run_command
   local function run_next()
-    mutation.index = mutation.index + 1
     local command = mutation.commands[mutation.index]
-    command_output:start_command(command)
+    run_command(command, function()
+      if mutation.index < #mutation.commands then
+        mutation.index = mutation.index + 1
+        run_next()
+      else
+        finish_success()
+      end
+    end, true)
+  end
+
+  run_command = function(command, on_success, allow_recovery)
+    command_output:start_command(command, opts.show_output)
     mutation.process = jj.run_mutation(mutation.root, command, function(result)
       if active_mutation ~= mutation then
         return
@@ -421,33 +512,91 @@ local function mutate(context, command_list, select_current)
 
       command_output:finish_command(result)
       if result.error or result.code ~= 0 then
-        active_mutation = nil
-        if not command_output:is_open() then
-          local message = result.error
-          if not message or message == "" then
-            message = result.stderr
-          end
-          if not message or message == "" then
-            message = "jj exited with code " .. tostring(result.code)
-          end
-          message = vim.trim(message:gsub("\27%[[0-9;]*m", ""))
-          vim.notify(message, vim.log.levels.ERROR, { title = "Majjit" })
+        if allow_recovery and jj.is_stale_error(result) then
+          run_command(jj.workspace_update_stale(), function()
+            mutation.recovery_changed = true
+            run_command(command, on_success, false)
+          end, false)
+        else
+          finish_failure(result)
         end
         return
       end
-      if mutation.index < #mutation.commands then
-        run_next()
-        return
-      end
-
-      active_mutation = nil
-      if target == buffer and target and vim.api.nvim_buf_is_valid(target) then
-        load(target, select_current and {} or nil)
-      end
+      on_success()
     end)
   end
 
   run_next()
+  return true
+end
+
+run_read = function(root, start, callback, opts)
+  opts = opts or {}
+  local cancelled = false
+  local current_process
+  local recovered = opts.allow_recovery == false
+
+  local attempt
+  attempt = function()
+    current_process = start(function(value, err, was_recovered)
+      if cancelled then
+        return
+      end
+      if err and not recovered and jj.is_stale_error(err) then
+        recovered = true
+        local started = mutate({ root = root }, jj.workspace_update_stale(), false, {
+          append_output = command_output:has_output(),
+          on_failure = function(result)
+            callback(nil, mutation_error(result))
+          end,
+          hold_active = true,
+          on_success = function(done)
+            if opts.refresh_after_recovery == false then
+              done()
+              attempt()
+              return
+            end
+            local target = buffer
+            if not target or not vim.api.nvim_buf_is_valid(target) then
+              done()
+              return
+            end
+            load(target, nil, false, function(load_err)
+              if cancelled then
+                done()
+                return
+              end
+              done()
+              if load_err then
+                callback(nil, load_err)
+              elseif opts.retry_after_refresh then
+                attempt()
+              else
+                callback(nil, nil, true)
+              end
+            end)
+          end,
+          refresh = false,
+          show_output = opts.suppress_output ~= true,
+        })
+        if not started then
+          callback(nil, err)
+        end
+        return
+      end
+      callback(value, err, was_recovered)
+    end)
+  end
+  attempt()
+
+  return {
+    kill = function(_, signal)
+      cancelled = true
+      if current_process then
+        pcall(current_process.kill, current_process, signal)
+      end
+    end,
+  }
 end
 
 local function select_revision_target(context, prompt, on_select)
@@ -456,7 +605,12 @@ local function select_revision_target(context, prompt, on_select)
   command_prompt:select({
     input_prompt = prompt,
     load = function(callback)
-      return jj.revision_targets(root, revset, callback)
+      return run_read(root, function(on_load)
+        return jj.revision_targets(root, revset, on_load)
+      end, callback, {
+        retry_after_refresh = true,
+        suppress_output = true,
+      })
     end,
     prompt = prompt,
   }, on_select)
@@ -464,8 +618,8 @@ end
 
 local function input_revsets(context)
   local root = context.root
-  command_prompt:input({ prompt = "Revsets: " }, function(value)
-    mutate({ root = root }, jj.new_revision(value, {}), true)
+  command_prompt:input({ prompt = "Revsets: " }, function(value, append_output)
+    mutate({ root = root }, jj.new_revision(value, {}), true, { append_output = append_output })
   end)
 end
 
@@ -473,7 +627,12 @@ local function select_bookmark(root, prompt, callback)
   command_prompt:select({
     input_prompt = prompt,
     load = function(on_load)
-      return jj.bookmark_names(root, on_load)
+      return run_read(root, function(callback)
+        return jj.bookmark_names(root, callback)
+      end, on_load, {
+        retry_after_refresh = true,
+        suppress_output = true,
+      })
     end,
     prompt = prompt,
   }, callback)
@@ -483,7 +642,12 @@ local function select_git_remote(root, callback)
   command_prompt:select({
     input_prompt = "Fetch remote: ",
     load = function(on_load)
-      return jj.git_remote_names(root, on_load)
+      return run_read(root, function(callback)
+        return jj.git_remote_names(root, callback)
+      end, on_load, {
+        retry_after_refresh = true,
+        suppress_output = true,
+      })
     end,
     prompt = "Fetch remote: ",
   }, callback)
@@ -595,14 +759,14 @@ function M.open()
       end,
       ["git.fetch.branch"] = function(context)
         local root = context.root
-        select_bookmark(root, "Fetch branch: ", function(name)
-          mutate({ root = root }, jj.git_fetch({ "-b", name }), true)
+        select_bookmark(root, "Fetch branch: ", function(name, append_output)
+          mutate({ root = root }, jj.git_fetch({ "-b", name }), true, { append_output = append_output })
         end)
       end,
       ["git.fetch.remote"] = function(context)
         local root = context.root
-        select_git_remote(root, function(remote)
-          mutate({ root = root }, jj.git_fetch({ "--remote", remote }), true)
+        select_git_remote(root, function(remote, append_output)
+          mutate({ root = root }, jj.git_fetch({ "--remote", remote }), true, { append_output = append_output })
         end)
       end,
       ["git.push.default"] = function(context)
@@ -626,14 +790,19 @@ function M.open()
       ["git.push.named"] = function(context)
         local root = context.root
         local change_id = context.commit.change_id
-        command_prompt:input({ prompt = "Bookmark name: " }, function(name)
-          mutate({ root = root }, jj.git_push({ "--named", name .. "=" .. change_id }), true)
+        command_prompt:input({ prompt = "Bookmark name: " }, function(name, append_output)
+          mutate(
+            { root = root },
+            jj.git_push({ "--named", name .. "=" .. change_id }),
+            true,
+            { append_output = append_output }
+          )
         end)
       end,
       ["git.push.bookmark"] = function(context)
         local root = context.root
-        select_bookmark(root, "Push bookmark: ", function(name)
-          mutate({ root = root }, jj.git_push({ "-b", name }), true)
+        select_bookmark(root, "Push bookmark: ", function(name, append_output)
+          mutate({ root = root }, jj.git_push({ "-b", name }), true, { append_output = append_output })
         end)
       end,
       ["operation.redo"] = function(context)
@@ -663,8 +832,8 @@ function M.open()
       end,
       ["revision.edit.target"] = function(context)
         local root = context.root
-        select_revision_target(context, "Edit: ", function(selected)
-          mutate({ root = root }, jj.edit(selected), true)
+        select_revision_target(context, "Edit: ", function(selected, append_output)
+          mutate({ root = root }, jj.edit(selected), true, { append_output = append_output })
         end)
       end,
       ["revision.new.after"] = function(context)
@@ -684,8 +853,8 @@ function M.open()
       end,
       ["revision.new.target"] = function(context)
         local root = context.root
-        select_revision_target(context, "New after: ", function(selected)
-          mutate({ root = root }, jj.new_revision(selected, {}), true)
+        select_revision_target(context, "New after: ", function(selected, append_output)
+          mutate({ root = root }, jj.new_revision(selected, {}), true, { append_output = append_output })
         end)
       end,
       ["revision.new.revsets"] = function(context)

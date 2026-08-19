@@ -25,6 +25,8 @@ function Prompt:_begin()
 
   local request = {
     buffer = self.get_buffer(),
+    had_output = self.output:has_output(),
+    output_version = self.output:version(),
     restore_output = self.output:is_open(),
   }
   self.active = request
@@ -54,7 +56,8 @@ function Prompt:_valid(request)
 end
 
 function Prompt:_restore(request)
-  if request.restore_output and self:_valid(request) then
+  local recovery_output = not request.had_output and self.output:has_output()
+  if (request.restore_output or recovery_output) and self:_valid(request) then
     self.output:show()
     self.update_mappings()
   end
@@ -87,7 +90,7 @@ function Prompt:_input(request, prompt, callback)
     end
 
     self.active = nil
-    callback(value)
+    callback(value, self.output:version() ~= request.output_version)
   end)
   if not ok then
     self:_error(request, input_err)
@@ -135,7 +138,7 @@ function Prompt:select(opts, callback)
       end
 
       self.active = nil
-      callback(selected)
+      callback(selected, self.output:version() ~= request.output_version)
     end)
     if not ok then
       self:_error(request, select_err)

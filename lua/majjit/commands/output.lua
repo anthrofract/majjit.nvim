@@ -23,6 +23,7 @@ function M.new(get_source_window, ansi)
     heading_lines = {},
     lines = {},
     namespace = vim.api.nvim_create_namespace("majjit-commands-output"),
+    revision = 0,
     window = nil,
   }, Output)
 end
@@ -33,6 +34,10 @@ end
 
 function Output:has_output()
   return #self.lines > 0
+end
+
+function Output:version()
+  return self.revision
 end
 
 function Output:_ensure_buffer()
@@ -95,14 +100,15 @@ function Output:_render(open)
   return true
 end
 
-function Output:start_sequence()
+function Output:start_sequence(show)
   self.completed = false
   self.heading_lines = {}
   self.lines = {}
-  self:_render(true)
+  self.revision = self.revision + 1
+  self:_render(show ~= false)
 end
 
-function Output:start_command(command)
+function Output:start_command(command, show)
   if self.completed then
     self.lines[#self.lines + 1] = ""
   end
@@ -111,7 +117,8 @@ function Output:start_command(command)
   self.lines[#self.lines + 1] = ""
   self.lines[#self.lines + 1] = "Running..."
   self.completed = false
-  self:_render(true)
+  self.revision = self.revision + 1
+  self:_render(show ~= false)
 end
 
 function Output:finish_command(result)
@@ -126,6 +133,7 @@ function Output:finish_command(result)
     self.lines[#self.lines + 1] = "jj exited with code " .. result.code
   end
   self.completed = true
+  self.revision = self.revision + 1
   self:_render(self:is_open())
 end
 
