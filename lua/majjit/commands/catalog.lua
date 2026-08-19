@@ -63,6 +63,14 @@ return {
           requires = { "commit" },
           unavailable = "Requires a commit",
         },
+        {
+          kind = "action",
+          id = "revision.new.target",
+          keys = { "/" },
+          label = "After target",
+          requires = { "repository" },
+          unavailable = "Requires a repository",
+        },
       },
     },
     {

@@ -16,6 +16,7 @@ local jump = require("majjit.jump")
 local jj = require("majjit.jj")
 local log = require("majjit.log")
 local active_mutation
+local active_target_request
 local namespace = vim.api.nvim_create_namespace("majjit")
 local repository = require("majjit.repository")
 local state
@@ -40,7 +41,9 @@ end
 local function get_context()
   local context = {
     buffer = buffer,
-    capabilities = {},
+    capabilities = {
+      repository = state ~= nil,
+    },
     root = state and state.root,
     state = state,
     window = get_window(),
@@ -397,11 +400,62 @@ local function mutate(context, operation, select_current)
   end)
 end
 
+local function new_at_target(context)
+  if active_target_request then
+    vim.notify("A target picker is already open", vim.log.levels.WARN, { title = "Majjit" })
+    return
+  end
+
+  local target = buffer
+  local request = {}
+  active_target_request = request
+  request.process = jj.revision_targets(context.root, context.state.revset, function(targets, err)
+    if active_target_request ~= request then
+      return
+    end
+    request.process = nil
+    if target ~= buffer or not target or not vim.api.nvim_buf_is_valid(target) then
+      active_target_request = nil
+      return
+    end
+    if err then
+      active_target_request = nil
+      vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
+      return
+    end
+
+    local ok, select_err = pcall(vim.ui.select, targets, { prompt = "New after: " }, function(selected)
+      if active_target_request ~= request then
+        return
+      end
+      active_target_request = nil
+      if target ~= buffer or not target or not vim.api.nvim_buf_is_valid(target) or not selected then
+        return
+      end
+
+      mutate({ root = context.root }, function(root, callback)
+        return jj.new_revision(root, selected, callback)
+      end, true)
+    end)
+    if not ok then
+      active_target_request = nil
+      vim.notify(tostring(select_err), vim.log.levels.ERROR, { title = "Majjit" })
+    end
+  end)
+end
+
 local function reset()
   if command_session then
     local session = command_session
     command_session = nil
     session:detach()
+  end
+  if active_target_request then
+    local request = active_target_request
+    active_target_request = nil
+    if request.process then
+      pcall(request.process.kill, request.process, 15)
+    end
   end
   repository.cancel()
   buffer = nil
@@ -480,6 +534,9 @@ function M.open()
         mutate(context, function(root, callback)
           return jj.new_revision(root, context.commit.change_id, callback)
         end, true)
+      end,
+      ["revision.new.target"] = function(context)
+        new_at_target(context)
       end,
       ["view.close"] = function()
         close()

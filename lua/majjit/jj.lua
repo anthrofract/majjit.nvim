@@ -1,5 +1,14 @@
 local M = {}
 
+local REVISION_TARGET_TEMPLATE = [=[
+change_id.shortest(8) ++ "\n"
+  ++ commit_id.shortest(8) ++ "\n"
+  ++ local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"
+  ++ remote_bookmarks.filter(|b| b.remote() != "git").map(|b| b.name() ++ "@" ++ b.remote()).join("\n") ++ "\n"
+  ++ tags.map(|t| t.name()).join("\n") ++ "\n"
+  ++ working_copies ++ "\n"
+]=]
+
 local function run(repository, args, opts, callback)
   local command = { "jj", "--color", opts.color, "--no-pager", "--repository", repository }
   vim.list_extend(command, args)
@@ -78,12 +87,38 @@ function M.log(repository, revset, template, callback)
   )
 end
 
-function M.new_revision(repository, change_id, callback)
-  return run(repository, { "new", change_id }, { color = "never" }, callback)
+function M.new_revision(repository, target, callback)
+  return run(repository, { "new", target }, { color = "never" }, callback)
 end
 
 function M.redo(repository, callback)
   return run(repository, { "redo" }, { color = "never" }, callback)
+end
+
+function M.revision_targets(repository, revset, callback)
+  return run(
+    repository,
+    { "log", "--no-graph", "--revisions", revset, "--template", REVISION_TARGET_TEMPLATE },
+    { color = "never" },
+    function(output, err)
+      if err then
+        callback(nil, err)
+        return
+      end
+
+      local targets = {}
+      local seen = {}
+      for _, line in ipairs(vim.split(output, "\n", { plain = true })) do
+        local target = vim.trim(line)
+        if target ~= "" and not seen[target] then
+          seen[target] = true
+          targets[#targets + 1] = target
+        end
+      end
+      table.sort(targets)
+      callback(targets, nil)
+    end
+  )
 end
 
 function M.undo(repository, callback)
