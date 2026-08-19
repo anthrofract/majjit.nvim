@@ -16,7 +16,7 @@ local jump = require("majjit.jump")
 local jj = require("majjit.jj")
 local log = require("majjit.log")
 local active_mutation
-local active_target_request
+local active_prompt_request
 local namespace = vim.api.nvim_create_namespace("majjit")
 local repository = require("majjit.repository")
 local state
@@ -400,48 +400,78 @@ local function mutate(context, operation, select_current)
   end)
 end
 
-local function new_at_target(context)
-  if active_target_request then
-    vim.notify("A target picker is already open", vim.log.levels.WARN, { title = "Majjit" })
+local function select_revision_target(context, prompt, on_select)
+  if active_prompt_request then
+    vim.notify("A prompt is already open", vim.log.levels.WARN, { title = "Majjit" })
     return
   end
 
   local target = buffer
   local request = {}
-  active_target_request = request
+  active_prompt_request = request
   request.process = jj.revision_targets(context.root, context.state.revset, function(targets, err)
-    if active_target_request ~= request then
+    if active_prompt_request ~= request then
       return
     end
     request.process = nil
     if target ~= buffer or not target or not vim.api.nvim_buf_is_valid(target) then
-      active_target_request = nil
+      active_prompt_request = nil
       return
     end
     if err then
-      active_target_request = nil
+      active_prompt_request = nil
       vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
       return
     end
 
-    local ok, select_err = pcall(vim.ui.select, targets, { prompt = "New after: " }, function(selected)
-      if active_target_request ~= request then
+    local ok, select_err = pcall(vim.ui.select, targets, { prompt = prompt }, function(selected)
+      if active_prompt_request ~= request then
         return
       end
-      active_target_request = nil
+      active_prompt_request = nil
       if target ~= buffer or not target or not vim.api.nvim_buf_is_valid(target) or not selected then
         return
       end
 
-      mutate({ root = context.root }, function(root, callback)
-        return jj.new_revision(root, selected, callback)
-      end, true)
+      on_select(selected)
     end)
     if not ok then
-      active_target_request = nil
+      active_prompt_request = nil
       vim.notify(tostring(select_err), vim.log.levels.ERROR, { title = "Majjit" })
     end
   end)
+end
+
+local function input_revsets(context)
+  if active_prompt_request then
+    vim.notify("A prompt is already open", vim.log.levels.WARN, { title = "Majjit" })
+    return
+  end
+
+  local target = buffer
+  local request = {}
+  active_prompt_request = request
+  local ok, input_err = pcall(vim.ui.input, { prompt = "Revsets: " }, function(value)
+    if active_prompt_request ~= request then
+      return
+    end
+    active_prompt_request = nil
+    if target ~= buffer or not target or not vim.api.nvim_buf_is_valid(target) or not value then
+      return
+    end
+
+    value = vim.trim(value)
+    if value == "" then
+      return
+    end
+    mutate({ root = context.root }, function(root, callback)
+      return jj.new_revision(root, value, {}, callback)
+    end, true)
+  end)
+  if not ok then
+    active_prompt_request = nil
+    vim.notify(tostring(input_err), vim.log.levels.ERROR, { title = "Majjit" })
+  end
 end
 
 local function reset()
@@ -450,9 +480,9 @@ local function reset()
     command_session = nil
     session:detach()
   end
-  if active_target_request then
-    local request = active_target_request
-    active_target_request = nil
+  if active_prompt_request then
+    local request = active_prompt_request
+    active_prompt_request = nil
     if request.process then
       pcall(request.process.kill, request.process, 15)
     end
@@ -522,7 +552,17 @@ function M.open()
       end,
       ["revision.abandon.selection"] = function(context)
         mutate(context, function(root, callback)
-          return jj.abandon(root, context.commit.change_id, callback)
+          return jj.abandon(root, context.commit.change_id, {}, callback)
+        end)
+      end,
+      ["revision.abandon.retain_bookmarks"] = function(context)
+        mutate(context, function(root, callback)
+          return jj.abandon(root, context.commit.change_id, { "--retain-bookmarks" }, callback)
+        end)
+      end,
+      ["revision.abandon.restore_descendants"] = function(context)
+        mutate(context, function(root, callback)
+          return jj.abandon(root, context.commit.change_id, { "--restore-descendants" }, callback)
         end)
       end,
       ["revision.edit.selection"] = function(context)
@@ -530,13 +570,53 @@ function M.open()
           return jj.edit(root, context.commit.change_id, callback)
         end)
       end,
+      ["revision.edit.target"] = function(context)
+        select_revision_target(context, "Edit: ", function(selected)
+          mutate({ root = context.root }, function(root, callback)
+            return jj.edit(root, selected, callback)
+          end, true)
+        end)
+      end,
       ["revision.new.after"] = function(context)
         mutate(context, function(root, callback)
-          return jj.new_revision(root, context.commit.change_id, callback)
+          return jj.new_revision(root, context.commit.change_id, {}, callback)
+        end, true)
+      end,
+      ["revision.new.insert_after"] = function(context)
+        mutate(context, function(root, callback)
+          return jj.new_revision(root, context.commit.change_id, { "--insert-after" }, callback)
+        end, true)
+      end,
+      ["revision.new.insert_before"] = function(context)
+        mutate(context, function(root, callback)
+          return jj.new_revision(root, context.commit.change_id, { "--no-edit", "--insert-before" }, callback)
+        end, true)
+      end,
+      ["revision.new.trunk"] = function(context)
+        mutate(context, function(root, callback)
+          return jj.new_revision(root, "trunk()", {}, callback)
+        end, true)
+      end,
+      ["revision.new.trunk_sync"] = function(context)
+        mutate(context, function(root, callback)
+          return jj.git_fetch(root, function(_, fetch_err)
+            if fetch_err then
+              callback(nil, fetch_err)
+              return
+            end
+            jj.new_revision(root, "trunk()", {}, callback)
+          end)
         end, true)
       end,
       ["revision.new.target"] = function(context)
-        new_at_target(context)
+        select_revision_target(context, "New after: ", function(selected)
+          mutate({ root = context.root }, function(root, callback)
+            return jj.new_revision(root, selected, {}, callback)
+          end, true)
+        end)
+      end,
+      ["revision.new.revsets"] = function(context)
+        input_revsets(context)
       end,
       ["view.close"] = function()
         close()

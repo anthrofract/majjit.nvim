@@ -43,8 +43,11 @@ function M.workspace_root(repository, callback)
   end)
 end
 
-function M.abandon(repository, change_id, callback)
-  return run(repository, { "abandon", change_id }, { color = "never" }, callback)
+function M.abandon(repository, change_id, flags, callback)
+  local args = { "abandon" }
+  vim.list_extend(args, flags)
+  args[#args + 1] = change_id
+  return run(repository, args, { color = "never" }, callback)
 end
 
 function M.diff_summary(repository, change_id, callback)
@@ -78,6 +81,10 @@ function M.file_show(repository, change_id, path, callback)
   )
 end
 
+function M.git_fetch(repository, callback)
+  return run(repository, { "git", "fetch" }, { color = "never" }, callback)
+end
+
 function M.log(repository, revset, template, callback)
   return run(
     repository,
@@ -87,8 +94,11 @@ function M.log(repository, revset, template, callback)
   )
 end
 
-function M.new_revision(repository, target, callback)
-  return run(repository, { "new", target }, { color = "never" }, callback)
+function M.new_revision(repository, target, flags, callback)
+  local args = { "new" }
+  vim.list_extend(args, flags)
+  args[#args + 1] = target
+  return run(repository, args, { color = "never" }, callback)
 end
 
 function M.redo(repository, callback)
