@@ -1,12 +1,44 @@
 local M = {}
 
+local ansi = require("baleia").setup({
+  async = false,
+  name = "MajjitAnsi",
+})
 local buffer
+local namespace = vim.api.nvim_create_namespace("majjit")
 local repository = require("majjit.repository")
 
 local function set_lines(target, lines)
   vim.bo[target].modifiable = true
   vim.api.nvim_buf_set_lines(target, 0, -1, false, lines)
+  vim.api.nvim_buf_clear_namespace(target, namespace, 0, -1)
+  ansi.once(target)
   vim.bo[target].modifiable = false
+end
+
+local function highlight_header(target, root, revset)
+  local repository_label = "repository: "
+  local revset_label = "  revset: "
+  local root_start = #repository_label
+  local revset_label_start = root_start + #root
+  local revset_start = revset_label_start + #revset_label
+
+  vim.api.nvim_buf_set_extmark(target, namespace, 0, 0, {
+    end_col = root_start,
+    hl_group = "Label",
+  })
+  vim.api.nvim_buf_set_extmark(target, namespace, 0, root_start, {
+    end_col = revset_label_start,
+    hl_group = "String",
+  })
+  vim.api.nvim_buf_set_extmark(target, namespace, 0, revset_label_start, {
+    end_col = revset_start,
+    hl_group = "Label",
+  })
+  vim.api.nvim_buf_set_extmark(target, namespace, 0, revset_start, {
+    end_col = revset_start + #revset,
+    hl_group = "String",
+  })
 end
 
 local function close()
@@ -65,6 +97,7 @@ function M.open()
     }
     vim.list_extend(lines, state.log_lines)
     set_lines(target, lines)
+    highlight_header(target, state.root, state.revset)
   end)
 end
 

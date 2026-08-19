@@ -1,7 +1,7 @@
 local M = {}
 
-local function run(repository, args, callback)
-  local command = { "jj", "--color", "never", "--no-pager", "--repository", repository }
+local function run(repository, args, opts, callback)
+  local command = { "jj", "--color", opts.color, "--no-pager", "--repository", repository }
   vim.list_extend(command, args)
 
   local function on_exit(result)
@@ -26,13 +26,18 @@ local function run(repository, args, callback)
 end
 
 function M.workspace_root(repository, callback)
-  run(repository, { "workspace", "root" }, function(output, err)
+  run(repository, { "workspace", "root" }, { color = "never" }, function(output, err)
     callback(output and vim.trim(output), err)
   end)
 end
 
 function M.log(repository, revset, callback)
-  run(repository, { "log", "--template", "builtin_log_compact", "--revisions", revset }, callback)
+  run(
+    repository,
+    { "log", "--template", "builtin_log_compact", "--revisions", revset },
+    { color = "always" },
+    callback
+  )
 end
 
 return M
