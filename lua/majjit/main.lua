@@ -9,6 +9,7 @@ local FOLD_MARKER_WIDTH = #"▸"
 local buffer
 local command_catalog = require("majjit.commands.catalog")
 local command_output
+local command_prompt
 local command_session
 local command_tree = require("majjit.commands.tree").compile(command_catalog)
 local commands = require("majjit.commands.session")
@@ -17,9 +18,9 @@ local jump = require("majjit.jump")
 local jj = require("majjit.jj")
 local log = require("majjit.log")
 local active_mutation
-local active_prompt_request
 local namespace = vim.api.nvim_create_namespace("majjit")
 local output_module = require("majjit.commands.output")
+local prompt_module = require("majjit.commands.prompt")
 local repository = require("majjit.repository")
 local state
 local user_window
@@ -438,113 +439,42 @@ local function mutate(context, command_list, select_current)
 end
 
 local function select_revision_target(context, prompt, on_select)
-  if active_prompt_request then
-    vim.notify("A prompt is already open", vim.log.levels.WARN, { title = "Majjit" })
-    return
-  end
-
-  local target = buffer
-  local restore_output = command_output and command_output:is_open()
-  if restore_output then
-    command_output:hide()
-    if command_session then
-      command_session:update_mappings()
-    end
-  end
-  local request = {}
-  active_prompt_request = request
-  request.process = jj.revision_targets(context.root, context.state.revset, function(targets, err)
-    if active_prompt_request ~= request then
-      return
-    end
-    request.process = nil
-    if target ~= buffer or not target or not vim.api.nvim_buf_is_valid(target) then
-      active_prompt_request = nil
-      return
-    end
-    if err then
-      active_prompt_request = nil
-      if restore_output then
-        command_output:show()
-        command_session:update_mappings()
-      end
-      vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
-      return
-    end
-
-    local ok, select_err = pcall(vim.ui.select, targets, { prompt = prompt }, function(selected)
-      if active_prompt_request ~= request then
-        return
-      end
-      active_prompt_request = nil
-      if target ~= buffer or not target or not vim.api.nvim_buf_is_valid(target) or not selected then
-        if restore_output and target == buffer and target and vim.api.nvim_buf_is_valid(target) then
-          command_output:show()
-          command_session:update_mappings()
-        end
-        return
-      end
-
-      on_select(selected)
-    end)
-    if not ok then
-      active_prompt_request = nil
-      if restore_output then
-        command_output:show()
-        command_session:update_mappings()
-      end
-      vim.notify(tostring(select_err), vim.log.levels.ERROR, { title = "Majjit" })
-    end
-  end)
+  local root = context.root
+  local revset = context.state.revset
+  command_prompt:select({
+    input_prompt = prompt,
+    load = function(callback)
+      return jj.revision_targets(root, revset, callback)
+    end,
+    prompt = prompt,
+  }, on_select)
 end
 
 local function input_revsets(context)
-  if active_prompt_request then
-    vim.notify("A prompt is already open", vim.log.levels.WARN, { title = "Majjit" })
-    return
-  end
-
-  local target = buffer
-  local restore_output = command_output and command_output:is_open()
-  if restore_output then
-    command_output:hide()
-    if command_session then
-      command_session:update_mappings()
-    end
-  end
-  local request = {}
-  active_prompt_request = request
-  local ok, input_err = pcall(vim.ui.input, { prompt = "Revsets: " }, function(value)
-    if active_prompt_request ~= request then
-      return
-    end
-    active_prompt_request = nil
-    if target ~= buffer or not target or not vim.api.nvim_buf_is_valid(target) or not value then
-      if restore_output and target == buffer and target and vim.api.nvim_buf_is_valid(target) then
-        command_output:show()
-        command_session:update_mappings()
-      end
-      return
-    end
-
-    value = vim.trim(value)
-    if value == "" then
-      if restore_output then
-        command_output:show()
-        command_session:update_mappings()
-      end
-      return
-    end
-    mutate({ root = context.root }, jj.new_revision(value, {}), true)
+  local root = context.root
+  command_prompt:input({ prompt = "Revsets: " }, function(value)
+    mutate({ root = root }, jj.new_revision(value, {}), true)
   end)
-  if not ok then
-    active_prompt_request = nil
-    if restore_output then
-      command_output:show()
-      command_session:update_mappings()
-    end
-    vim.notify(tostring(input_err), vim.log.levels.ERROR, { title = "Majjit" })
-  end
+end
+
+local function select_bookmark(root, prompt, callback)
+  command_prompt:select({
+    input_prompt = prompt,
+    load = function(on_load)
+      return jj.bookmark_names(root, on_load)
+    end,
+    prompt = prompt,
+  }, callback)
+end
+
+local function select_git_remote(root, callback)
+  command_prompt:select({
+    input_prompt = "Fetch remote: ",
+    load = function(on_load)
+      return jj.git_remote_names(root, on_load)
+    end,
+    prompt = "Fetch remote: ",
+  }, callback)
 end
 
 local function reset()
@@ -560,12 +490,9 @@ local function reset()
     command_session = nil
     session:detach()
   end
-  if active_prompt_request then
-    local request = active_prompt_request
-    active_prompt_request = nil
-    if request.process then
-      pcall(request.process.kill, request.process, 15)
-    end
+  if command_prompt then
+    command_prompt:cancel()
+    command_prompt = nil
   end
   if command_output then
     command_output:close()
@@ -613,6 +540,20 @@ function M.open()
   vim.wo.number = false
   vim.wo.relativenumber = false
   command_output = output_module.new(get_window, ansi)
+  command_prompt = prompt_module.new({
+    can_start = function()
+      return active_mutation == nil
+    end,
+    get_buffer = function()
+      return buffer
+    end,
+    output = command_output,
+    update_mappings = function()
+      if command_session then
+        command_session:update_mappings()
+      end
+    end,
+  })
 
   local target = buffer
   vim.api.nvim_create_autocmd("BufWipeout", {
@@ -629,6 +570,58 @@ function M.open()
 
   command_session = commands.attach({
     actions = {
+      ["git.fetch.default"] = function(context)
+        mutate(context, jj.git_fetch(), true)
+      end,
+      ["git.fetch.all_remotes"] = function(context)
+        mutate(context, jj.git_fetch({ "--all-remotes" }), true)
+      end,
+      ["git.fetch.tracked"] = function(context)
+        mutate(context, jj.git_fetch({ "--tracked" }), true)
+      end,
+      ["git.fetch.branch"] = function(context)
+        local root = context.root
+        select_bookmark(root, "Fetch branch: ", function(name)
+          mutate({ root = root }, jj.git_fetch({ "-b", name }), true)
+        end)
+      end,
+      ["git.fetch.remote"] = function(context)
+        local root = context.root
+        select_git_remote(root, function(remote)
+          mutate({ root = root }, jj.git_fetch({ "--remote", remote }), true)
+        end)
+      end,
+      ["git.push.default"] = function(context)
+        mutate(context, jj.git_push(), true)
+      end,
+      ["git.push.all"] = function(context)
+        mutate(context, jj.git_push({ "--all" }), true)
+      end,
+      ["git.push.revision"] = function(context)
+        mutate(context, jj.git_push({ "-r", context.commit.change_id }), true)
+      end,
+      ["git.push.tracked"] = function(context)
+        mutate(context, jj.git_push({ "--tracked" }), true)
+      end,
+      ["git.push.deleted"] = function(context)
+        mutate(context, jj.git_push({ "--deleted" }), true)
+      end,
+      ["git.push.change"] = function(context)
+        mutate(context, jj.git_push({ "-c", context.commit.change_id }), true)
+      end,
+      ["git.push.named"] = function(context)
+        local root = context.root
+        local change_id = context.commit.change_id
+        command_prompt:input({ prompt = "Bookmark name: " }, function(name)
+          mutate({ root = root }, jj.git_push({ "--named", name .. "=" .. change_id }), true)
+        end)
+      end,
+      ["git.push.bookmark"] = function(context)
+        local root = context.root
+        select_bookmark(root, "Push bookmark: ", function(name)
+          mutate({ root = root }, jj.git_push({ "-b", name }), true)
+        end)
+      end,
       ["operation.redo"] = function(context)
         mutate(context, jj.redo())
       end,
@@ -648,8 +641,9 @@ function M.open()
         mutate(context, jj.edit(context.commit.change_id))
       end,
       ["revision.edit.target"] = function(context)
+        local root = context.root
         select_revision_target(context, "Edit: ", function(selected)
-          mutate({ root = context.root }, jj.edit(selected), true)
+          mutate({ root = root }, jj.edit(selected), true)
         end)
       end,
       ["revision.new.after"] = function(context)
@@ -668,8 +662,9 @@ function M.open()
         mutate(context, { jj.git_fetch(), jj.new_revision("trunk()", {}) }, true)
       end,
       ["revision.new.target"] = function(context)
+        local root = context.root
         select_revision_target(context, "New after: ", function(selected)
-          mutate({ root = context.root }, jj.new_revision(selected, {}), true)
+          mutate({ root = root }, jj.new_revision(selected, {}), true)
         end)
       end,
       ["revision.new.revsets"] = function(context)

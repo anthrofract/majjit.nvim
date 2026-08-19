@@ -1,7 +1,24 @@
 local help_module = require("majjit.commands.help")
+local jj_module = require("majjit.jj")
 local output_module = require("majjit.commands.output")
+local prompt_module = require("majjit.commands.prompt")
 local session_module = require("majjit.commands.session")
 local tree_module = require("majjit.commands.tree")
+
+local production_tree = tree_module.compile(require("majjit.commands.catalog"))
+local git_menu = production_tree.root.children_by_key.g
+assert(git_menu and git_menu.id == "git")
+assert(git_menu.children_by_key.f.id == "git.fetch")
+assert(git_menu.children_by_key.p.id == "git.push")
+for _, key in ipairs({ "f", "a", "t", "b", "r" }) do
+  assert(git_menu.children_by_key.f.children_by_key[key])
+end
+for _, key in ipairs({ "p", "a", "r", "t", "d", "c", "n", "b" }) do
+  assert(git_menu.children_by_key.p.children_by_key[key])
+end
+assert(vim.deep_equal(jj_module.git_fetch().args, { "git", "fetch" }))
+assert(vim.deep_equal(jj_module.git_fetch({ "--tracked" }).args, { "git", "fetch", "--tracked" }))
+assert(vim.deep_equal(jj_module.git_push({ "--deleted" }).args, { "git", "push", "--deleted" }))
 
 local function expect_error(pattern, callback)
   local ok, err = pcall(callback)
@@ -408,6 +425,97 @@ assert(vim.api.nvim_win_get_cursor(command_output.window)[1] == vim.api.nvim_buf
 local command_output_buffer = command_output.buffer
 command_output:close()
 assert(not vim.api.nvim_buf_is_valid(command_output_buffer))
+
+local prompt_output = {
+  open = true,
+  show_count = 0,
+}
+function prompt_output:is_open()
+  return self.open
+end
+function prompt_output:hide()
+  self.open = false
+end
+function prompt_output:show()
+  self.open = true
+  self.show_count = self.show_count + 1
+end
+local prompt = prompt_module.new({
+  get_buffer = function()
+    return vim.api.nvim_get_current_buf()
+  end,
+  output = prompt_output,
+  update_mappings = function() end,
+})
+local original_select = vim.ui.select
+local original_input = vim.ui.input
+local selected_value
+vim.ui.select = function(items, opts, callback)
+  assert(vim.deep_equal(items, { "candidate" }))
+  assert(opts.prompt == "Select: ")
+  callback(items[1])
+end
+prompt:select({
+  load = function(callback)
+    callback({ "candidate" }, nil)
+  end,
+  prompt = "Select: ",
+}, function(value)
+  selected_value = value
+end)
+assert(selected_value == "candidate")
+assert(not prompt_output.open)
+
+prompt_output.open = true
+local input_value
+vim.ui.input = function(opts, callback)
+  assert(opts.prompt == "Manual: ")
+  callback("  manual  ")
+end
+prompt:select({
+  input_prompt = "Manual: ",
+  load = function(callback)
+    callback({}, nil)
+  end,
+  prompt = "Select: ",
+}, function(value)
+  input_value = value
+end)
+assert(input_value == "manual")
+assert(not prompt_output.open)
+
+prompt_output.open = true
+vim.ui.input = function(_, callback)
+  callback(nil)
+end
+prompt:input({ prompt = "Cancel: " }, function()
+  error("Cancelled input ran")
+end)
+assert(prompt_output.open)
+assert(prompt_output.show_count == 1)
+
+local input_called = false
+local original_notify = vim.notify
+vim.notify = function() end
+local blocked_prompt = prompt_module.new({
+  can_start = function()
+    return false
+  end,
+  get_buffer = function()
+    return vim.api.nvim_get_current_buf()
+  end,
+  output = prompt_output,
+  update_mappings = function() end,
+})
+vim.ui.input = function()
+  input_called = true
+end
+blocked_prompt:input({ prompt = "Blocked: " }, function() end)
+assert(not input_called)
+assert(prompt_output.open)
+vim.notify = original_notify
+vim.ui.select = original_select
+vim.ui.input = original_input
 
 local leave_buffer = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_win_set_buf(0, leave_buffer)

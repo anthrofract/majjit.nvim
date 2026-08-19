@@ -44,6 +44,26 @@ local function mutation(args)
   }
 end
 
+local function git_mutation(operation, args)
+  local command = { "git", operation }
+  vim.list_extend(command, args or {})
+  return mutation(command)
+end
+
+local function parse_lines(output, transform)
+  local lines = {}
+  local seen = {}
+  for _, line in ipairs(vim.split(output, "\n", { plain = true })) do
+    line = transform and transform(line) or vim.trim(line)
+    if line and line ~= "" and not seen[line] then
+      seen[line] = true
+      lines[#lines + 1] = line
+    end
+  end
+  table.sort(lines)
+  return lines
+end
+
 function M.workspace_root(repository, callback)
   return run(repository, { "workspace", "root" }, { color = "never" }, function(output, err)
     callback(output and vim.trim(output), err)
@@ -55,6 +75,17 @@ function M.abandon(change_id, flags)
   vim.list_extend(args, flags)
   args[#args + 1] = change_id
   return mutation(args)
+end
+
+function M.bookmark_names(repository, callback)
+  return run(
+    repository,
+    { "bookmark", "list", "--all-remotes", "--template", 'name ++ "\\n"' },
+    { color = "never" },
+    function(output, err)
+      callback(output and parse_lines(output) or nil, err)
+    end
+  )
 end
 
 function M.diff_summary(repository, change_id, callback)
@@ -88,8 +119,20 @@ function M.file_show(repository, change_id, path, callback)
   )
 end
 
-function M.git_fetch()
-  return mutation({ "git", "fetch" })
+function M.git_fetch(args)
+  return git_mutation("fetch", args)
+end
+
+function M.git_push(args)
+  return git_mutation("push", args)
+end
+
+function M.git_remote_names(repository, callback)
+  return run(repository, { "git", "remote", "list" }, { color = "never" }, function(output, err)
+    callback(output and parse_lines(output, function(line)
+      return line:match("^%s*(%S+)")
+    end) or nil, err)
+  end)
 end
 
 function M.log(repository, revset, template, callback)
@@ -123,17 +166,7 @@ function M.revision_targets(repository, revset, callback)
         return
       end
 
-      local targets = {}
-      local seen = {}
-      for _, line in ipairs(vim.split(output, "\n", { plain = true })) do
-        local target = vim.trim(line)
-        if target ~= "" and not seen[target] then
-          seen[target] = true
-          targets[#targets + 1] = target
-        end
-      end
-      table.sort(targets)
-      callback(targets, nil)
+      callback(parse_lines(output), nil)
     end
   )
 end
