@@ -298,14 +298,14 @@ function Workflow:open_file()
   end
 
   if commit.current_working_copy then
-    local _, err = jump.open_working_file(state.root, file.path, session.user_window, buffer)
+    local _, err = jump.open_working_file(state.root, file.path, buffer)
     if err then
       vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
     end
     return
   end
 
-  if jump.focus_historical_file(commit.commit_id, file.path) then
+  if jump.focus_historical_file(commit.commit_id, file.path, buffer) then
     return
   end
 
@@ -342,7 +342,12 @@ function Workflow:open_file()
     if result.state ~= session.view.state then
       self:_render(result.state, selection, saved_view)
     end
-    local _, open_err = jump.open_historical_file(result.target.commit_id, intent.path, result.value)
+    local _, open_err = jump.open_historical_file(
+      result.target.commit_id,
+      intent.path,
+      result.value,
+      buffer
+    )
     if open_err then
       vim.notify(open_err, vim.log.levels.ERROR, { title = "Majjit" })
     end

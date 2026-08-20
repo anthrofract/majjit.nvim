@@ -1,32 +1,14 @@
 local M = {}
 
-local function is_user_window(window, majjit_buffer)
-  if not vim.api.nvim_win_is_valid(window) then
-    return false
-  end
-  local config = vim.api.nvim_win_get_config(window)
-  if config.relative and config.relative ~= "" then
-    return false
-  end
-
-  local buffer = vim.api.nvim_win_get_buf(window)
-  return buffer ~= majjit_buffer
-    and vim.api.nvim_buf_is_valid(buffer)
-    and vim.fn.buflisted(buffer) == 1
-    and vim.bo[buffer].buftype == ""
-end
-
-local function find_user_window(preferred, majjit_buffer)
-  if preferred and is_user_window(preferred, majjit_buffer) then
-    return preferred
-  end
-  for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
-    for _, window in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
-      if is_user_window(window, majjit_buffer) then
-        return window
-      end
+local function find_target_window(majjit_buffer)
+  local majjit_window = vim.fn.win_findbuf(majjit_buffer)[1]
+  local tab = vim.api.nvim_win_get_tabpage(majjit_window)
+  for _, window in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+    if window ~= majjit_window and vim.api.nvim_win_get_config(window).relative == "" then
+      return window
     end
   end
+  return majjit_window
 end
 
 local function preview_name(commit_id, path)
@@ -41,53 +23,43 @@ local function find_buffer(name)
   end
 end
 
-local function focus_buffer(buffer)
-  local windows = vim.fn.win_findbuf(buffer)
-  if windows[1] then
-    vim.api.nvim_set_current_win(windows[1])
-    return
-  end
-
-  vim.cmd.tabnew()
-  vim.api.nvim_win_set_buf(0, buffer)
-end
-
-function M.focus_historical_file(commit_id, path)
+function M.focus_historical_file(commit_id, path, majjit_buffer)
   local buffer = find_buffer(preview_name(commit_id, path))
   if not buffer then
     return false
   end
-  focus_buffer(buffer)
+  local window = find_target_window(majjit_buffer)
+  vim.api.nvim_win_set_buf(window, buffer)
+  vim.api.nvim_set_current_win(window)
   return true
 end
 
-function M.open_working_file(root, path, preferred_window, majjit_buffer)
+function M.open_working_file(root, path, majjit_buffer)
   local full_path = vim.fs.joinpath(root, path)
   if not vim.uv.fs_stat(full_path) then
     return nil, "Path does not exist in the working copy: " .. full_path
   end
 
-  local window = find_user_window(preferred_window, majjit_buffer)
-  if window then
-    local ok, err = pcall(vim.api.nvim_win_call, window, function()
+  local window = find_target_window(majjit_buffer)
+  local replace_majjit = vim.api.nvim_win_get_buf(window) == majjit_buffer
+  local ok, err = pcall(vim.api.nvim_win_call, window, function()
+    if replace_majjit then
+      local buffer = vim.fn.bufadd(full_path)
+      vim.fn.bufload(buffer)
+      vim.api.nvim_win_set_buf(window, buffer)
+    else
       vim.cmd("edit " .. vim.fn.fnameescape(full_path))
-    end)
-    if not ok then
-      return nil, tostring(err)
     end
-    vim.api.nvim_set_current_win(window)
-    return true, nil
-  end
-
-  local ok, err = pcall(vim.cmd, "tabedit " .. vim.fn.fnameescape(full_path))
+  end)
   if not ok then
     return nil, tostring(err)
   end
+  vim.api.nvim_set_current_win(window)
   return true, nil
 end
 
-function M.open_historical_file(commit_id, path, contents)
-  if M.focus_historical_file(commit_id, path) then
+function M.open_historical_file(commit_id, path, contents, majjit_buffer)
+  if M.focus_historical_file(commit_id, path, majjit_buffer) then
     return true, nil
   end
   if contents:find("\0", 1, true) then
@@ -106,8 +78,9 @@ function M.open_historical_file(commit_id, path, contents)
     lines = { "" }
   end
 
-  vim.cmd.tabnew()
-  local buffer = vim.api.nvim_get_current_buf()
+  local window = find_target_window(majjit_buffer)
+  local return_buffer = vim.api.nvim_win_get_buf(window)
+  local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_name(buffer, preview_name(commit_id, path))
   vim.bo[buffer].bufhidden = "wipe"
   vim.bo[buffer].buftype = "nofile"
@@ -120,10 +93,14 @@ function M.open_historical_file(commit_id, path, contents)
   vim.bo[buffer].modified = false
   vim.bo[buffer].readonly = true
 
+  vim.api.nvim_win_set_buf(window, buffer)
+  vim.api.nvim_set_current_win(window)
+
   vim.keymap.set("n", "q", function()
-    if #vim.api.nvim_list_tabpages() > 1 then
-      vim.cmd.tabclose()
-    else
+    local preview_window = vim.fn.win_findbuf(buffer)[1]
+    if preview_window and vim.api.nvim_buf_is_valid(return_buffer) then
+      vim.api.nvim_win_set_buf(preview_window, return_buffer)
+    elseif vim.api.nvim_buf_is_valid(buffer) then
       vim.api.nvim_buf_delete(buffer, { force = true })
     end
   end, {

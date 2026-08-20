@@ -37,6 +37,10 @@ local function reset(session)
     session.output:close()
     session.output = nil
   end
+  if session.user_window and vim.api.nvim_win_is_valid(session.user_window) then
+    vim.wo[session.user_window].number = session.number
+    vim.wo[session.user_window].relativenumber = session.relativenumber
+  end
   jj.set_ignore_immutable(false)
   if active_session == session then
     active_session = nil
@@ -44,12 +48,15 @@ local function reset(session)
 end
 
 local function close(session)
+  local buffer = session.view.buffer
+  local window = session.view:get_window()
   reset(session)
 
-  if #vim.api.nvim_list_tabpages() > 1 then
-    vim.cmd.tabclose()
-  else
-    vim.api.nvim_buf_delete(0, { force = true })
+  if window and vim.api.nvim_win_is_valid(window) and vim.api.nvim_buf_is_valid(session.user_buffer) then
+    vim.api.nvim_win_set_buf(window, session.user_buffer)
+  end
+  if buffer and vim.api.nvim_buf_is_valid(buffer) then
+    vim.api.nvim_buf_delete(buffer, { force = true })
   end
 end
 
@@ -68,17 +75,23 @@ function M.open()
 
   local cwd = vim.fn.getcwd()
   local user_window = vim.api.nvim_get_current_win()
+  local user_buffer = vim.api.nvim_win_get_buf(user_window)
+  local number = vim.wo[user_window].number
+  local relativenumber = vim.wo[user_window].relativenumber
 
-  vim.cmd.tabnew()
-  local buffer = vim.api.nvim_get_current_buf()
+  local buffer = vim.api.nvim_create_buf(true, true)
+  vim.api.nvim_win_set_buf(user_window, buffer)
   local session = {
     closed = false,
     commands = nil,
     cwd = cwd,
     editor = nil,
+    number = number,
     operation = nil,
     output = nil,
     prompt = nil,
+    relativenumber = relativenumber,
+    user_buffer = user_buffer,
     user_window = user_window,
     view = view_module.new(buffer, ansi),
   }
@@ -89,8 +102,8 @@ function M.open()
   vim.bo[buffer].buftype = "nofile"
   vim.bo[buffer].filetype = "majjit"
   vim.bo[buffer].swapfile = false
-  vim.wo.number = false
-  vim.wo.relativenumber = false
+  vim.wo[user_window].number = false
+  vim.wo[user_window].relativenumber = false
 
   session.output = output_module.new(function()
     return session.view:get_window()

@@ -41,8 +41,8 @@ function M.new(get_source_window)
   return setmetatable({
     buffer = nil,
     get_source_window = get_source_window,
+    source_buffer = nil,
     submitting = false,
-    tab = nil,
   }, Editor)
 end
 
@@ -62,28 +62,23 @@ function Editor:focus()
   return true
 end
 
-function Editor:_close_tab(tab)
-  if not tab or not vim.api.nvim_tabpage_is_valid(tab) or #vim.api.nvim_list_tabpages() <= 1 then
-    return
-  end
-  local source_window = self.get_source_window()
-  vim.api.nvim_set_current_tabpage(tab)
-  vim.cmd.tabclose({ bang = true })
-  if source_window and vim.api.nvim_win_is_valid(source_window) then
-    vim.api.nvim_set_current_win(source_window)
-  end
-end
-
 function Editor:close()
   local buffer = self.buffer
-  local tab = self.tab
+  local source_buffer = self.source_buffer
   self.buffer = nil
+  self.source_buffer = nil
   self.submitting = false
-  self.tab = nil
   if buffer and vim.api.nvim_buf_is_valid(buffer) then
-    vim.api.nvim_buf_delete(buffer, { force = true })
+    local window = vim.fn.win_findbuf(buffer)[1]
+    if window and source_buffer and vim.api.nvim_buf_is_valid(source_buffer) then
+      vim.api.nvim_win_set_buf(window, source_buffer)
+    else
+      vim.api.nvim_buf_delete(buffer, { force = true })
+    end
   end
-  self:_close_tab(tab)
+  if source_buffer and vim.api.nvim_buf_is_valid(source_buffer) then
+    vim.bo[source_buffer].bufhidden = "wipe"
+  end
 end
 
 function Editor:open(opts)
@@ -92,11 +87,13 @@ function Editor:open(opts)
     return false
   end
 
-  vim.cmd.tabnew()
-  local buffer = vim.api.nvim_get_current_buf()
+  local window = self.get_source_window()
+  local source_buffer = vim.api.nvim_win_get_buf(window)
+  local buffer = vim.api.nvim_create_buf(true, false)
   self.buffer = buffer
+  self.source_buffer = source_buffer
   self.submitting = false
-  self.tab = vim.api.nvim_get_current_tabpage()
+  vim.bo[source_buffer].bufhidden = "hide"
 
   local lines, endofline = description_lines(append_instructions(opts.contents))
   vim.api.nvim_buf_set_name(buffer, opts.name or "majjit://describe/" .. opts.change_id)
@@ -107,6 +104,12 @@ function Editor:open(opts)
   vim.bo[buffer].endofline = endofline
   vim.bo[buffer].filetype = "jjdescription"
   vim.bo[buffer].modified = false
+  vim.api.nvim_win_set_buf(window, buffer)
+  vim.api.nvim_set_current_win(window)
+  vim.keymap.set("n", "ZZ", "<Cmd>write<CR>", { buffer = buffer, desc = "Save Majjit description" })
+  vim.keymap.set("n", "ZQ", function()
+    self:close()
+  end, { buffer = buffer, desc = "Discard Majjit description" })
 
   vim.api.nvim_create_autocmd("BufWriteCmd", {
     buffer = buffer,
@@ -119,10 +122,6 @@ function Editor:open(opts)
       self.submitting = true
       vim.bo[buffer].modifiable = false
 
-      local source_window = self.get_source_window()
-      if source_window and vim.api.nvim_win_is_valid(source_window) then
-        vim.api.nvim_set_current_win(source_window)
-      end
       opts.on_submit(description, function(succeeded)
         if self.buffer ~= buffer or not vim.api.nvim_buf_is_valid(buffer) then
           return
@@ -143,13 +142,9 @@ function Editor:open(opts)
     once = true,
     callback = function()
       if self.buffer == buffer then
-        local tab = self.tab
         self.buffer = nil
+        self.source_buffer = nil
         self.submitting = false
-        self.tab = nil
-        vim.schedule(function()
-          self:_close_tab(tab)
-        end)
       end
     end,
   })
