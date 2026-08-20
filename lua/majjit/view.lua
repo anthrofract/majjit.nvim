@@ -248,12 +248,19 @@ function View:move_item(direction, count, window)
 end
 
 function View:focus_commit(change_id)
-  local window = self:get_window()
   local commit = self.state and log.find_commit(self.state.log, change_id)
-  if not window or not commit then
+  if not commit then
     return false
   end
-  vim.api.nvim_win_set_cursor(window, { commit.line + HEADER_LINE_COUNT, 0 })
+  return self:focus_log_line(commit.line)
+end
+
+function View:focus_log_line(line)
+  local window = self:get_window()
+  if not window then
+    return false
+  end
+  vim.api.nvim_win_set_cursor(window, { line + HEADER_LINE_COUNT, 0 })
   self:highlight_cursor(window)
   return true
 end

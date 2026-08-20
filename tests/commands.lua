@@ -5,7 +5,12 @@ local session_module = require("majjit.commands.session")
 local tree_module = require("majjit.commands.tree")
 local fzf_lua = require("fzf-lua")
 
-tree_module.compile(require("majjit.commands.catalog"))
+local production_tree = tree_module.compile(require("majjit.commands.catalog"))
+local select_current = production_tree.root.children_by_key["@"]
+assert(select_current.id == "view.select.current")
+assert(select_current.available_during_session)
+assert(select_current.preserve_session)
+
 local function expect_error(pattern, callback)
   local ok, err = pcall(callback)
   assert(not ok, "Expected callback to fail")

@@ -69,5 +69,7 @@ assert(move_from(9, 1) == 9)
 assert(move_from(1, 1) == 2)
 assert(move_from(2, 1) == 3)
 assert(move_from(2, -1) == 1)
+assert(view:focus_log_line(3))
+assert(vim.api.nvim_win_get_cursor(0)[1] == 5)
 
 vim.api.nvim_buf_delete(buffer, { force = true })

@@ -693,6 +693,13 @@ function Workflow:select_values(root, prompt, query, callback, opts)
   return self:_select_repository_value(root, prompt, query, callback, opts)
 end
 
+function Workflow:select_current_working_copy()
+  local state = self.session.view.state
+  if state then
+    self.session.view:focus_log_line(state.log.current_line or 1)
+  end
+end
+
 function Workflow:select_revision_target(context, prompt, callback)
   local root = context.root
   local revset = context.revset

@@ -578,6 +578,15 @@ return {
     },
     {
       kind = "action",
+      id = "view.select.current",
+      keys = { "@" },
+      group = "General",
+      label = "Select @ change",
+      available_during_session = true,
+      preserve_session = true,
+    },
+    {
+      kind = "action",
       id = "options.ignore_immutable",
       keys = { "I" },
       group = "General",

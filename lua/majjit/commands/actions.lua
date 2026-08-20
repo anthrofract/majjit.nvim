@@ -643,6 +643,9 @@ function M.new(workflow, close)
   actions["view.right_click"] = function()
     workflow:right_click()
   end
+  actions["view.select.current"] = function()
+    workflow:select_current_working_copy()
+  end
   for _, kind in ipairs({ "bookmark", "description", "tag", "target" }) do
     actions["view.select." .. kind] = function()
       workflow:select_visible_commit(kind)
