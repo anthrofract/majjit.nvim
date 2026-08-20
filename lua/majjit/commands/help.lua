@@ -27,7 +27,7 @@ local function entry_cell(entry)
   return {
     text = text,
     highlights = {
-      { group = "String", start = 0, finish = #keys },
+      { group = "MajjitValue", start = 0, finish = #keys },
     },
   }
 end
@@ -43,7 +43,7 @@ local function build_columns(entries)
           {
             text = start == 1 and group.name or "",
             highlights = start == 1 and {
-              { group = "Function", start = 0, finish = #group.name },
+              { group = "MajjitLabel", start = 0, finish = #group.name },
             } or {},
           },
         },
@@ -99,7 +99,7 @@ local function render(entries, error_message)
     lines[#lines + 1] = ""
     lines[#lines + 1] = error_message
     highlights[#highlights + 1] = {
-      group = "DiagnosticError",
+      group = "MajjitAnsiRed",
       line = #lines - 1,
       start = 0,
       finish = #error_message,
@@ -181,7 +181,7 @@ function Help:show(entries, error_message)
     vim.api.nvim_win_set_config(self.window, config)
   else
     self.window = vim.api.nvim_open_win(self.buffer, false, config)
-    vim.wo[self.window].winhighlight = "NormalFloat:Normal,FloatBorder:Comment"
+    vim.wo[self.window].winhighlight = "NormalFloat:MajjitNormal,FloatBorder:MajjitDecoration"
   end
   return true
 end

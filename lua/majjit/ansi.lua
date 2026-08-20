@@ -1,4 +1,5 @@
 local M = {}
+local colors = require("majjit.highlights").ansi_colors
 
 local name = "MajjitAnsi"
 local namespace = vim.api.nvim_create_namespace(name)
@@ -6,49 +7,6 @@ local raw = require("baleia").setup({
   async = false,
   name = name,
 })
-
-local colors = {
-  "Black",
-  "Red",
-  "Green",
-  "Yellow",
-  "Blue",
-  "Magenta",
-  "Cyan",
-  "White",
-  "BrightBlack",
-  "BrightRed",
-  "BrightGreen",
-  "BrightYellow",
-  "BrightBlue",
-  "BrightMagenta",
-  "BrightCyan",
-  "BrightWhite",
-}
-local links = {
-  "NonText",
-  "DiagnosticError",
-  "DiagnosticOk",
-  "DiagnosticWarn",
-  "Function",
-  "Keyword",
-  "DiagnosticInfo",
-  "Normal",
-  "NonText",
-  "DiagnosticError",
-  "DiagnosticOk",
-  "DiagnosticWarn",
-  "Function",
-  "Keyword",
-  "DiagnosticInfo",
-  "Normal",
-}
-for index, color in ipairs(colors) do
-  vim.api.nvim_set_hl(0, "MajjitAnsi" .. color, {
-    default = true,
-    link = links[index],
-  })
-end
 
 local translations = {}
 
@@ -63,25 +21,10 @@ local function translate(group)
     groups[#groups + 1] = "MajjitAnsi" .. colors[highlight.ctermfg + 1]
   end
   if highlight.bold then
-    groups[#groups + 1] = "Bold"
+    groups[#groups + 1] = "MajjitAnsiBold"
   end
-  if highlight.italic then
-    groups[#groups + 1] = "Italic"
-  end
-  if
-    highlight.underline
-    or highlight.undercurl
-    or highlight.underdouble
-    or highlight.underdotted
-    or highlight.underdashed
-  then
-    groups[#groups + 1] = "Underlined"
-  end
-  if highlight.strikethrough then
-    groups[#groups + 1] = "Strike"
-  end
-  if highlight.reverse then
-    groups[#groups + 1] = "Visual"
+  if highlight.underline then
+    groups[#groups + 1] = "MajjitAnsiUnderline"
   end
   translations[group] = groups
   return groups

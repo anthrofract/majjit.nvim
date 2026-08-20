@@ -197,9 +197,6 @@ local function render_hunk(hunk)
 end
 
 local function render_diff_line(line)
-  local clean = strip_ansi(line.ansi)
-  line.changed = clean:sub(1, 1) == "+" or clean:sub(1, 1) == "-"
-  line.content_column = #line.graph_indent + 2
   return {
     line.graph_indent .. "  " .. line.ansi,
   }

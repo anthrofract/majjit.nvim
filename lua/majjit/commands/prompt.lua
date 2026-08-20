@@ -207,9 +207,9 @@ function Prompt:select(opts, callback)
       },
       fzf_colors = true,
       hls = {
-        border = "Comment",
+        border = "MajjitDecoration",
         fzf = {
-          separator = "Comment",
+          separator = "MajjitDecoration",
         },
       },
       profile = "ivy",

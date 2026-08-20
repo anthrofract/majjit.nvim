@@ -8,32 +8,23 @@ local FOLD_MARKER_WIDTH = #"▸"
 local View = {}
 View.__index = View
 
-vim.api.nvim_set_hl(0, "MajjitDiffChange", {
-  bold = true,
-  default = true,
-})
-vim.api.nvim_set_hl(0, "MajjitSource", {
-  default = true,
-  link = "Visual",
-})
-
 local function highlight_header(view, revset)
   local revset_label = "revset: "
   local revset_start = #revset_label
 
   vim.api.nvim_buf_set_extmark(view.buffer, view.namespace, 0, 0, {
     end_col = revset_start,
-    hl_group = "Function",
+    hl_group = "MajjitLabel",
   })
   vim.api.nvim_buf_set_extmark(view.buffer, view.namespace, 0, revset_start, {
     end_col = revset_start + #revset,
-    hl_group = "String",
+    hl_group = "MajjitValue",
   })
   if view.ignore_immutable then
     local option_start = revset_start + #revset + 2
     vim.api.nvim_buf_set_extmark(view.buffer, view.namespace, 0, option_start, {
       end_col = option_start + #"--ignore-immutable",
-      hl_group = "DiagnosticError",
+      hl_group = "MajjitAnsiRed",
     })
   end
 end
@@ -44,24 +35,16 @@ local function highlight_log(view, revision_log)
       local row = entry.line + HEADER_LINE_COUNT - 1
       vim.api.nvim_buf_set_extmark(view.buffer, view.namespace, row, entry.fold_column, {
         end_col = entry.fold_column + FOLD_MARKER_WIDTH,
-        hl_group = "Comment",
+        hl_group = "MajjitDecoration",
       })
 
       if entry.kind == "file" then
         local line = vim.api.nvim_buf_get_lines(view.buffer, row, row + 1, false)[1]
         vim.api.nvim_buf_set_extmark(view.buffer, view.namespace, row, entry.content_column, {
           end_col = #line,
-          hl_group = "Directory",
+          hl_group = "MajjitFile",
         })
       end
-    elseif entry.kind == "diff_line" and entry.changed then
-      local row = entry.line + HEADER_LINE_COUNT - 1
-      local line = vim.api.nvim_buf_get_lines(view.buffer, row, row + 1, false)[1]
-      vim.api.nvim_buf_set_extmark(view.buffer, view.namespace, row, entry.content_column, {
-        end_col = #line,
-        hl_group = "MajjitDiffChange",
-        hl_mode = "combine",
-      })
     end
   end
 end
@@ -82,7 +65,7 @@ local function highlight_source(view, revision_log)
         view.namespace,
         entry.line + HEADER_LINE_COUNT - 1,
         0,
-        { line_hl_group = "MajjitSource" }
+        { line_hl_group = "MajjitSelection" }
       )
     end
   end

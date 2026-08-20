@@ -58,7 +58,7 @@ function Output:_render(open)
   for line in pairs(self.heading_lines) do
     vim.api.nvim_buf_set_extmark(self.buffer, self.namespace, line - 1, 0, {
       end_col = #"❯",
-      hl_group = "DiagnosticWarn",
+      hl_group = "MajjitAnsiYellow",
     })
   end
   vim.bo[self.buffer].modifiable = false
@@ -89,7 +89,7 @@ function Output:_render(open)
     vim.api.nvim_win_set_config(self.window, config)
   else
     self.window = vim.api.nvim_open_win(self.buffer, false, config)
-    vim.wo[self.window].winhighlight = "NormalFloat:Normal,FloatBorder:Comment"
+    vim.wo[self.window].winhighlight = "NormalFloat:MajjitNormal,FloatBorder:MajjitDecoration"
   end
   vim.api.nvim_win_set_cursor(self.window, { #rendered, 0 })
   return true

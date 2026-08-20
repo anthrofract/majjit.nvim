@@ -8,6 +8,7 @@ local function render()
     "\27[31mred\27[0m plain",
     "\27[32mgreen\27[0m",
     "\27[1;32mbold green\27[0m",
+    "\27[4;31munderlined red\27[0m",
   })
   ansi.once(buffer)
 end
@@ -26,31 +27,38 @@ assert(vim.deep_equal(vim.api.nvim_buf_get_lines(buffer, 0, -1, false), {
   "red plain",
   "green",
   "bold green",
+  "underlined red",
 }))
 assert(vim.deep_equal(highlight_groups(), {
   "MajjitAnsiRed",
   "MajjitAnsiGreen",
-  "Bold",
+  "MajjitAnsiBold",
+  "MajjitAnsiUnderline",
 }))
 assert(vim.api.nvim_get_hl(0, { link = true, name = "MajjitAnsiGreen" }).link == "DiagnosticOk")
 vim.api.nvim_set_hl(0, "DiagnosticError", { fg = "#123456" })
 assert(vim.api.nvim_get_hl(0, { link = false, name = "MajjitAnsiRed" }).fg == 0x123456)
 vim.api.nvim_set_hl(0, "DiagnosticError", { fg = "#654321" })
 assert(vim.api.nvim_get_hl(0, { link = false, name = "MajjitAnsiRed" }).fg == 0x654321)
+vim.api.nvim_set_hl(0, "Comment", { fg = "#123456" })
+assert(vim.api.nvim_get_hl(0, { link = false, name = "MajjitDecoration" }).fg == 0x123456)
 
 vim.cmd.colorscheme("default")
 assert(vim.api.nvim_get_hl(0, { link = true, name = "MajjitAnsiRed" }).link == "DiagnosticError")
+assert(vim.api.nvim_get_hl(0, { link = true, name = "MajjitDecoration" }).link == "Comment")
 assert(vim.deep_equal(highlight_groups(), {
   "MajjitAnsiRed",
   "MajjitAnsiGreen",
-  "Bold",
+  "MajjitAnsiBold",
+  "MajjitAnsiUnderline",
 }))
 
 render()
 assert(vim.deep_equal(highlight_groups(), {
   "MajjitAnsiRed",
   "MajjitAnsiGreen",
-  "Bold",
+  "MajjitAnsiBold",
+  "MajjitAnsiUnderline",
 }))
 
 vim.api.nvim_buf_delete(buffer, { force = true })
