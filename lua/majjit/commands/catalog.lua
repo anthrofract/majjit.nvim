@@ -1,3 +1,81 @@
+local function action(id, key, label, requires)
+  return {
+    kind = "action",
+    id = id,
+    keys = { key },
+    label = label,
+    requires = requires,
+  }
+end
+
+local function menu(id, key, label, children, requires, capture)
+  return {
+    kind = "menu",
+    id = id,
+    keys = { key },
+    label = label,
+    children = children,
+    requires = requires,
+    capture = capture,
+  }
+end
+
+local REBASE_SOURCES = {
+  { id = "branch", key = "b", label = "Selected branch" },
+  { id = "source", key = "s", label = "Selected source" },
+  { id = "revision", key = "r", label = "Selected revision" },
+}
+local REBASE_PLACEMENTS = {
+  { id = "after", key = "a", label = "Insert after" },
+  { id = "before", key = "b", label = "Insert before" },
+  { id = "onto", key = "o", label = "Onto" },
+}
+local REBASE_DESTINATIONS = {
+  { id = "selection", key = "<CR>", label = "Select destination", requires = { "commit" } },
+  { id = "trunk", key = "m", label = "Trunk", requires = { "repository" } },
+  { id = "current", key = "c", label = "@", requires = { "repository" } },
+  { id = "target", key = "/", label = "Target", requires = { "repository" } },
+}
+
+local function rebase_menu()
+  local children = {
+    action("revision.rebase.branch.trunk", "m", "Selected branch onto trunk", { "commit" }),
+    action("revision.rebase.branch.trunk_sync", "M", "Selected branch onto trunk (sync)", { "commit" }),
+    action("revision.rebase.custom", "c", "Custom", { "repository" }),
+  }
+
+  for _, source in ipairs(REBASE_SOURCES) do
+    local placements = {}
+    for _, placement in ipairs(REBASE_PLACEMENTS) do
+      local destinations = {}
+      for _, destination in ipairs(REBASE_DESTINATIONS) do
+        destinations[#destinations + 1] = action(
+          ("revision.rebase.%s.%s.%s"):format(source.id, placement.id, destination.id),
+          destination.key,
+          destination.label,
+          destination.requires
+        )
+      end
+      placements[#placements + 1] = menu(
+        ("revision.rebase.%s.%s"):format(source.id, placement.id),
+        placement.key,
+        placement.label,
+        destinations
+      )
+    end
+    children[#children + 1] = menu(
+      ("revision.rebase.%s"):format(source.id),
+      source.key,
+      source.label,
+      placements,
+      { "commit" },
+      "source"
+    )
+  end
+
+  return menu("revision.rebase", "r", "Rebase", children)
+end
+
 return {
   controls = {
     cancel = {
@@ -44,6 +122,44 @@ return {
         },
       },
     },
+    menu("revision.absorb", "A", "Absorb", {
+      action("revision.absorb.selection", "a", "From selection", { "commit" }),
+      menu("revision.absorb.into", "i", "From selection into destination", {
+        action("revision.absorb.into.destination", "<CR>", "Select destination", { "commit" }),
+      }, { "commit" }, "source"),
+    }),
+    menu("bookmark", "b", "Bookmark", {
+      action("bookmark.advance", "a", "Advance to selection", { "commit" }),
+      action("bookmark.create", "c", "Create at selection", { "commit" }),
+      menu("bookmark.list", "L", "List", {
+        action("bookmark.list.all", "a", "All", { "repository" }),
+        action("bookmark.list.local", "L", "Local only", { "repository" }),
+        action("bookmark.list.tracked", "t", "Tracked remote", { "repository" }),
+        action("bookmark.list.untracked", "u", "Untracked remote", { "repository" }),
+        action("bookmark.list.conflicted", "c", "Conflicted", { "repository" }),
+      }),
+      menu("bookmark.move", "m", "Move", {
+        menu("bookmark.move.selection", "m", "Selected bookmark to destination", {
+          action("bookmark.move.selection.destination", "<CR>", "Select destination", { "commit" }),
+        }, { "commit" }, "source"),
+        menu("bookmark.move.allow_backwards", "M", "Selected bookmark to destination (allow backwards)", {
+          action("bookmark.move.allow_backwards.destination", "<CR>", "Select destination", { "commit" }),
+        }, { "commit" }, "source"),
+      }),
+      action("bookmark.rename", "r", "Rename", { "repository" }),
+      action("bookmark.track", "t", "Track", { "repository" }),
+      action("bookmark.untrack", "u", "Untrack", { "repository" }),
+      action("bookmark.delete", "d", "Delete", { "repository" }),
+      action("bookmark.forget", "f", "Forget", { "repository" }),
+      action("bookmark.forget_remotes", "F", "Forget (including remotes)", { "repository" }),
+      action("bookmark.set", "s", "Set to selection", { "commit" }),
+      action("bookmark.set_allow_backwards", "S", "Set to selection (allow backwards)", { "commit" }),
+    }),
+    action("commands.custom", "C", "Custom", { "repository" }),
+    menu("revision.commit", "c", "Commit", {
+      action("revision.commit.selection", "c", "Commit", { "repository" }),
+      action("revision.commit.edit", "C", "Commit (edit description)", { "repository" }),
+    }),
     {
       kind = "menu",
       id = "revision.describe",
@@ -67,6 +183,18 @@ return {
         },
       },
     },
+    menu("revision.duplicate", "D", "Duplicate", {
+      action("revision.duplicate.selection", "d", "Selection", { "commit" }),
+      menu("revision.duplicate.onto", "o", "Selection onto destination", {
+        action("revision.duplicate.onto.destination", "<CR>", "Select destination", { "commit" }),
+      }, { "commit" }, "source"),
+      menu("revision.duplicate.after", "a", "Selection insert after destination", {
+        action("revision.duplicate.after.destination", "<CR>", "Select destination", { "commit" }),
+      }, { "commit" }, "source"),
+      menu("revision.duplicate.before", "b", "Selection insert before destination", {
+        action("revision.duplicate.before.destination", "<CR>", "Select destination", { "commit" }),
+      }, { "commit" }, "source"),
+    }),
     {
       kind = "menu",
       id = "revision.edit",
@@ -90,6 +218,10 @@ return {
         },
       },
     },
+    menu("file", "f", "File", {
+      action("file.track", "t", "Track (enter filepath)", { "repository" }),
+      action("file.untrack", "u", "Untrack selection (must be ignored)", { "file" }),
+    }),
     {
       kind = "menu",
       id = "git",
@@ -221,6 +353,27 @@ return {
         },
       },
     },
+    menu("revision.metaedit", "m", "Metaedit", {
+      action("revision.metaedit.update_change_id", "c", "Update change-id", { "commit" }),
+      action("revision.metaedit.update_author_timestamp", "t", "Update author timestamp to now", { "commit" }),
+      action("revision.metaedit.update_author", "a", "Update author to configured user", { "commit" }),
+      action("revision.metaedit.set_author", "A", "Set author", { "commit" }),
+      action("revision.metaedit.set_author_timestamp", "T", "Set author timestamp", { "commit" }),
+      action("revision.metaedit.force_rewrite", "r", "Force rewrite", { "commit" }),
+    }),
+    menu("log.revset", "L", "Log revset", {
+      action("log.revset.default", "d", "Default", { "repository" }),
+      action("log.revset.jj_default", "D", "Jj default", { "repository" }),
+      action("log.revset.custom", "L", "Custom", { "repository" }),
+      action("log.revset.all", "a", "All commits", { "repository" }),
+      action("log.revset.mutable", "m", "Mutable", { "repository" }),
+      action("log.revset.stack", "s", "Current stack", { "repository" }),
+      action("log.revset.conflicts", "c", "Conflicts", { "repository" }),
+      action("log.revset.working_copy_ancestry", "w", "@ ancestry", { "repository" }),
+      action("log.revset.mine", "i", "Mine", { "repository" }),
+      action("log.revset.bookmarks", "b", "Bookmarks and tags", { "repository" }),
+      action("log.revset.recent", "r", "Recent", { "repository" }),
+    }),
     {
       kind = "menu",
       id = "revision.new",
@@ -279,6 +432,66 @@ return {
         },
       },
     },
+    menu("navigation.next", "N", "Next", {
+      action("navigation.next.default", "n", "Next", { "commit" }),
+      action("navigation.next.nth", "N", "Nth next", { "commit" }),
+      action("navigation.next.edit", "e", "Next (edit)", { "commit" }),
+      action("navigation.next.nth_edit", "E", "Nth next (edit)", { "commit" }),
+      action("navigation.next.no_edit", "x", "Next (no-edit)", { "commit" }),
+      action("navigation.next.nth_no_edit", "X", "Nth next (no-edit)", { "commit" }),
+      action("navigation.next.conflict", "c", "Next conflict", { "commit" }),
+    }),
+    menu("revision.parallelize", "p", "Parallelize", {
+      action("revision.parallelize.selection", "p", "Selection with parent", { "commit" }),
+      menu("revision.parallelize.range", "P", "From selection to destination", {
+        action("revision.parallelize.range.destination", "<CR>", "Select destination", { "commit" }),
+      }, { "commit" }, "source"),
+      action("revision.parallelize.revset", "r", "Revset", { "repository" }),
+    }),
+    menu("navigation.previous", "P", "Previous", {
+      action("navigation.previous.default", "p", "Previous", { "commit" }),
+      action("navigation.previous.nth", "P", "Nth previous", { "commit" }),
+      action("navigation.previous.edit", "e", "Previous (edit)", { "commit" }),
+      action("navigation.previous.nth_edit", "E", "Nth previous (edit)", { "commit" }),
+      action("navigation.previous.no_edit", "x", "Previous (no-edit)", { "commit" }),
+      action("navigation.previous.nth_no_edit", "X", "Nth previous (no-edit)", { "commit" }),
+      action("navigation.previous.conflict", "c", "Previous conflict", { "commit" }),
+    }),
+    menu("revision.squash", "s", "Squash", {
+      action("revision.squash.parent", "s", "Selection into parent", { "commit" }),
+      action("revision.squash.parent_edit", "S", "Selection into parent (edit description)", { "commit" }),
+      menu("revision.squash.into", "i", "Selection into destination", {
+        action("revision.squash.into.destination", "<CR>", "Select destination", { "commit" }),
+      }, { "commit" }, "source"),
+      menu("revision.squash.into_edit", "I", "Selection into destination (edit description)", {
+        action("revision.squash.into_edit.destination", "<CR>", "Select destination", { "commit" }),
+      }, { "commit" }, "source"),
+    }),
+    action("repository.status", "t", "Status", { "repository" }),
+    menu("revision.sign", "G", "Sign", {
+      action("revision.sign.selection", "s", "Selection", { "commit" }),
+      menu("revision.sign.range", "G", "From selection to destination", {
+        action("revision.sign.range.destination", "<CR>", "Select destination", { "commit" }),
+      }, { "commit" }, "source"),
+      action("revision.unsign.selection", "u", "Unsign selection", { "commit" }),
+      menu("revision.unsign.range", "U", "Unsign from selection to destination", {
+        action("revision.unsign.range.destination", "<CR>", "Select destination", { "commit" }),
+      }, { "commit" }, "source"),
+    }),
+    menu("revision.simplify_parents", "y", "Simplify parents", {
+      action("revision.simplify_parents.selection", "y", "Selection", { "commit" }),
+      action("revision.simplify_parents.descendants", "Y", "Selection with descendants", { "commit" }),
+    }),
+    rebase_menu(),
+    menu("revision.restore", "R", "Restore", {
+      action("revision.restore.changes", "r", "Changes in selection", { "commit" }),
+      action("revision.restore.descendants", "d", "Changes in selection (restore descendants)", { "commit" }),
+      action("revision.restore.from", "f", "From selection into @", { "commit" }),
+      action("revision.restore.into", "i", "From @ into selection", { "commit" }),
+      menu("revision.restore.from_into", "R", "From selection into destination", {
+        action("revision.restore.from_into.destination", "<CR>", "Select destination", { "commit" }),
+      }, { "commit" }, "source"),
+    }),
     {
       kind = "menu",
       id = "view.select",
@@ -316,6 +529,32 @@ return {
         },
       },
     },
+    menu("revision.revert", "V", "Revert", {
+      action("revision.revert.current", "v", "Selection onto @", { "commit" }),
+      menu("revision.revert.onto", "o", "Selection onto destination", {
+        action("revision.revert.onto.destination", "<CR>", "Select destination", { "commit" }),
+      }, { "commit" }, "source"),
+      menu("revision.revert.after", "a", "Selection after destination", {
+        action("revision.revert.after.destination", "<CR>", "Select destination", { "commit" }),
+      }, { "commit" }, "source"),
+      menu("revision.revert.before", "b", "Selection before destination", {
+        action("revision.revert.before.destination", "<CR>", "Select destination", { "commit" }),
+      }, { "commit" }, "source"),
+    }),
+    menu("workspace", "w", "Workspace", {
+      menu("workspace.add", "a", "Add", {
+        action("workspace.add.path", "a", "By path (name from path)", { "repository" }),
+        action("workspace.add.named", "n", "By name and path", { "repository" }),
+      }),
+      menu("workspace.forget", "f", "Forget", {
+        action("workspace.forget.current", "c", "Current", { "repository" }),
+        action("workspace.forget.target", "/", "Target", { "repository" }),
+        action("workspace.forget.selection", "f", "All at selected change", { "commit" }),
+      }),
+      action("workspace.list", "L", "List", { "repository" }),
+      action("workspace.rename", "r", "Rename current", { "repository" }),
+      action("workspace.update_stale", "u", "Update stale", { "repository" }),
+    }),
     {
       kind = "menu",
       id = "operation.undo_redo",
@@ -357,7 +596,7 @@ return {
     {
       kind = "action",
       id = "view.open",
-      keys = { "<CR>" },
+      keys = { "<CR>", "o" },
       group = "General",
       label = "Open",
       requires = { "file" },

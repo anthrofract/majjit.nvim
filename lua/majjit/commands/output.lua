@@ -103,10 +103,11 @@ function Output:start_sequence(show)
 end
 
 function Output:start_command(command, show)
+  local display_command = command.display or command.display_args or command.args or command
   if self.completed then
     self.lines[#self.lines + 1] = ""
   end
-  self.lines[#self.lines + 1] = "❯ jj " .. table.concat(command, " ")
+  self.lines[#self.lines + 1] = "❯ jj " .. table.concat(display_command, " ")
   self.heading_lines[#self.lines] = true
   self.lines[#self.lines + 1] = ""
   self.lines[#self.lines + 1] = "Running..."
@@ -119,7 +120,10 @@ function Output:finish_command(result)
     self.lines[#self.lines] = nil
   end
 
-  local has_result_output = result.stderr and append_text(self.lines, result.stderr)
+  local has_result_output = result.stdout and append_text(self.lines, result.stdout)
+  if result.stderr and append_text(self.lines, result.stderr) then
+    has_result_output = true
+  end
   if not has_result_output and result.error then
     append_text(self.lines, result.error)
   elseif not has_result_output and result.code ~= 0 then

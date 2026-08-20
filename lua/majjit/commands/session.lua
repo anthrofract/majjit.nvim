@@ -45,6 +45,8 @@ function M.attach(opts)
     installed_keys = {},
     overlay = opts.overlay,
     restore_overlay = false,
+    set_source = opts.set_source,
+    source = nil,
     tree = opts.tree,
   }, Session)
 
@@ -138,7 +140,16 @@ end
 function Session:_context()
   local context = self.get_context() or {}
   context.capabilities = context.capabilities or {}
+  context.source = self.source
+  context.capabilities.source = self.source ~= nil
   return context
+end
+
+function Session:_set_source(source)
+  self.source = source
+  if self.set_source then
+    self.set_source(source)
+  end
 end
 
 function Session:_render_help()
@@ -172,6 +183,7 @@ end
 function Session:_reset(restore_overlay)
   self.active = self.tree.root
   self.error_message = nil
+  self:_set_source(nil)
   self.help:close()
   if restore_overlay ~= false and self.restore_overlay and self.overlay then
     self.overlay:show()
@@ -207,6 +219,9 @@ function Session:_activate(node)
   end
 
   if node.kind == "menu" then
+    if node.capture == "source" then
+      self:_set_source(vim.deepcopy(context))
+    end
     self.active = node
     self.error_message = nil
     self:_apply_mappings()
@@ -263,6 +278,7 @@ function Session:detach()
   end
   self.detached = true
   self:_clear_mappings()
+  self:_set_source(nil)
   self.help:close()
   self.restore_overlay = false
   pcall(vim.api.nvim_del_augroup_by_id, self.autocmd_group)

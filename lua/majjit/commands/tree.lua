@@ -4,6 +4,9 @@ local VALID_KINDS = {
   action = true,
   menu = true,
 }
+local VALID_CAPTURES = {
+  source = true,
+}
 local CAPABILITY_NAMES = {
   commit = "a commit",
   file = "a file",
@@ -74,10 +77,15 @@ local function compile_node(spec, ids)
   node.children_by_key = nil
 
   if spec.kind == "action" then
+    assert(not spec.capture, ("Action '%s' cannot capture context"):format(spec.id))
     assert(not spec.children, ("Action '%s' cannot have children"):format(spec.id))
     return node
   end
 
+  assert(
+    spec.capture == nil or VALID_CAPTURES[spec.capture],
+    ("Command '%s' has invalid capture '%s'"):format(spec.id, tostring(spec.capture))
+  )
   assert(type(spec.children) == "table" and #spec.children > 0, ("Command '%s' requires children"):format(spec.id))
   node.children = {}
   node.children_by_key = {}
@@ -193,7 +201,8 @@ function M.help_entries(tree, node)
   for _, child in ipairs(node.children or {}) do
     if not child.hidden and #child.keys > 0 then
       entries[#entries + 1] = {
-        group = child.group or node.label,
+        balance = node == tree.root,
+        group = child.group or (node == tree.root and "Commands" or node.label),
         keys = child.keys,
         label = child.label,
       }
@@ -204,6 +213,7 @@ function M.help_entries(tree, node)
     local help = tree.controls.help
     if help and not help.hidden and #help.keys > 0 then
       entries[#entries + 1] = {
+        balance = true,
         group = help.group or "General",
         keys = help.keys,
         label = help.label,

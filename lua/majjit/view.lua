@@ -12,6 +12,10 @@ vim.api.nvim_set_hl(0, "MajjitDiffChange", {
   bold = true,
   default = true,
 })
+vim.api.nvim_set_hl(0, "MajjitSource", {
+  default = true,
+  link = "Visual",
+})
 
 local function highlight_header(view, revset)
   local revset_label = "revset: "
@@ -58,6 +62,28 @@ local function highlight_log(view, revision_log)
         hl_group = "MajjitDiffChange",
         hl_mode = "combine",
       })
+    end
+  end
+end
+
+local function highlight_source(view, revision_log)
+  if not view.source or not view.source.commit then
+    return
+  end
+
+  local entries = { log.find_commit(revision_log, view.source.commit.change_id) }
+  if view.source.file then
+    entries[#entries + 1] = log.find_file(revision_log, view.source.commit.change_id, view.source.file.path)
+  end
+  for _, entry in ipairs(entries) do
+    if entry then
+      view.source_extmarks[#view.source_extmarks + 1] = vim.api.nvim_buf_set_extmark(
+        view.buffer,
+        view.namespace,
+        entry.line + HEADER_LINE_COUNT - 1,
+        0,
+        { line_hl_group = "MajjitSource" }
+      )
     end
   end
 end
@@ -115,6 +141,8 @@ function M.new(buffer, ansi)
     buffer = buffer,
     ignore_immutable = false,
     namespace = vim.api.nvim_create_namespace("majjit"),
+    source = nil,
+    source_extmarks = {},
     state = nil,
   }, View)
 end
@@ -134,6 +162,7 @@ function View:set_lines(lines)
   vim.bo[self.buffer].modifiable = true
   vim.api.nvim_buf_set_lines(self.buffer, 0, -1, false, lines)
   vim.api.nvim_buf_clear_namespace(self.buffer, self.namespace, 0, -1)
+  self.source_extmarks = {}
   self.ansi.once(self.buffer)
   vim.bo[self.buffer].modifiable = false
 end
@@ -154,6 +183,7 @@ function View:get_context()
   local entry = self:entry_at_cursor(window)
   local file = log.file_for_entry(self.state.log, entry)
   context.commit = log.commit_for_entry(self.state.log, entry)
+  context.file = file
   context.capabilities.commit = context.commit ~= nil
   context.capabilities.file = file ~= nil
   context.capabilities.foldable = entry ~= nil
@@ -233,8 +263,28 @@ function View:render(next_state, selection, saved_view)
   self:set_lines(lines)
   highlight_header(self, next_state.revset)
   highlight_log(self, next_state.log)
+  highlight_source(self, next_state.log)
   restore_selection(self, next_state, selection, saved_view)
   self.state = next_state
+end
+
+function View:set_source(source)
+  self.source = vim.deepcopy(source)
+  for _, extmark in ipairs(self.source_extmarks) do
+    pcall(vim.api.nvim_buf_del_extmark, self.buffer, self.namespace, extmark)
+  end
+  self.source_extmarks = {}
+  if self.state then
+    highlight_source(self, self.state.log)
+  end
+end
+
+function View:clear_source()
+  self.source = nil
+  for _, extmark in ipairs(self.source_extmarks) do
+    pcall(vim.api.nvim_buf_del_extmark, self.buffer, self.namespace, extmark)
+  end
+  self.source_extmarks = {}
 end
 
 function View:set_ignore_immutable(enabled)

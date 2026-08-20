@@ -12,7 +12,7 @@ local function group_entries(entries)
   for _, entry in ipairs(entries) do
     local group = by_name[entry.group]
     if not group then
-      group = { name = entry.group, entries = {} }
+      group = { balance = entry.balance, name = entry.group, entries = {} }
       by_name[entry.group] = group
       groups[#groups + 1] = group
     end
@@ -35,7 +35,9 @@ end
 local function build_columns(entries)
   local columns = {}
   for _, group in ipairs(group_entries(entries)) do
-    for start = 1, #group.entries, MAX_ENTRIES_PER_COLUMN do
+    local column_count = math.ceil(#group.entries / MAX_ENTRIES_PER_COLUMN)
+    local column_size = group.balance and math.ceil(#group.entries / column_count) or MAX_ENTRIES_PER_COLUMN
+    for start = 1, #group.entries, column_size do
       local column = {
         rows = {
           {
@@ -47,7 +49,7 @@ local function build_columns(entries)
         },
         width = 0,
       }
-      local finish = math.min(start + MAX_ENTRIES_PER_COLUMN - 1, #group.entries)
+      local finish = math.min(start + column_size - 1, #group.entries)
       for i = start, finish do
         column.rows[#column.rows + 1] = entry_cell(group.entries[i])
       end

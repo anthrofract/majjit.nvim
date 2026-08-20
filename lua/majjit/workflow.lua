@@ -2,6 +2,7 @@ local jj = require("majjit.jj")
 local jump = require("majjit.jump")
 local log = require("majjit.log")
 local operation_module = require("majjit.operation")
+local prompt_module = require("majjit.commands.prompt")
 local repository = require("majjit.repository")
 
 local M = {}
@@ -25,6 +26,7 @@ local function command_succeeded(result)
 end
 
 function M.new(session)
+  session.revset = session.revset or repository.DEFAULT_REVSET
   return setmetatable({ session = session }, Workflow)
 end
 
@@ -75,7 +77,7 @@ function Workflow:_run_command(operation, repository_path, command, show_output)
   elseif show_output then
     session.output:show()
   end
-  session.output:start_command(command.args or command, show_output)
+  session.output:start_command(command, show_output)
   if session.commands then
     session.commands:update_mappings()
   end
@@ -90,8 +92,9 @@ function Workflow:_repair_workspace(operation, repository_path, show_output)
   return self:_run_command(operation, repository_path, jj.workspace_update_stale(), show_output)
 end
 
-function Workflow:_load_repository(operation, repository_path, show_recovery, allow_recovery)
-  local next_state, err = repository.load(operation, repository_path)
+function Workflow:_load_repository(operation, repository_path, show_recovery, allow_recovery, revset)
+  revset = revset or self.session.revset
+  local next_state, err = repository.load(operation, repository_path, revset)
   if not err or allow_recovery == false or not jj.is_stale_error(err) then
     return next_state, err
   end
@@ -100,7 +103,7 @@ function Workflow:_load_repository(operation, repository_path, show_recovery, al
   if not command_succeeded(result) then
     return nil, mutation_error(result)
   end
-  return repository.load(operation, repository_path)
+  return repository.load(operation, repository_path, revset)
 end
 
 function Workflow:_load_with_recovery(operation, state, target, intent, resolve, load)
@@ -122,7 +125,7 @@ function Workflow:_load_with_recovery(operation, state, target, intent, resolve,
     return nil, mutation_error(recovery)
   end
 
-  state, err = repository.load(operation, state.root)
+  state, err = repository.load(operation, state.root, self.session.revset)
   if err then
     return nil, err
   end
@@ -169,6 +172,7 @@ function Workflow:load(selection)
       return
     end
     self:_render(next_state, selection)
+    session.revset = next_state.revset
   end)
 end
 
@@ -404,6 +408,162 @@ function Workflow:mutate(context, command_list, select_current, append_output, o
   end)
 end
 
+function Workflow:run(context, command)
+  local session = self.session
+  local root = context.root or session.cwd
+  return self:_start_operation(function(operation)
+    session.output:start_sequence()
+    return self:_run_command(operation, root, command, true)
+  end, function(result)
+    if not command_succeeded(result) and not session.output:is_open() then
+      vim.notify(mutation_error(result), vim.log.levels.ERROR, { title = "Majjit" })
+    end
+  end)
+end
+
+function Workflow:query(root, query, callback)
+  return self:_start_operation(function(operation)
+    return operation:await(query)
+  end, callback)
+end
+
+function Workflow:set_revset(root, revset)
+  local session = self.session
+  local selection, saved_view = session.view:capture_selection()
+  self:_start_operation(function(operation)
+    return self:_load_repository(operation, root, true, true, revset)
+  end, function(state, err)
+    if err then
+      vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
+      return
+    end
+    session.revset = revset
+    self:_render(state, selection, saved_view)
+  end)
+end
+
+function Workflow:_finish_editor_mutation(root, command, selection, complete)
+  if self.session.operation then
+    vim.notify("A repository operation is already running", vim.log.levels.WARN, { title = "Majjit" })
+    complete(false)
+    return
+  end
+  self:mutate({ root = root }, command, selection, false, function(result)
+    local succeeded = result and result.succeeded == true
+    if not succeeded and result and result.failure and self.session.output:is_open() then
+      local message = vim.trim(mutation_error(result.failure):gsub("\27%[[0-9;]*m", ""))
+      vim.notify(message, vim.log.levels.ERROR, { title = "Majjit" })
+    end
+    complete(succeeded)
+  end)
+end
+
+function Workflow:commit(context, edit_description)
+  local session = self.session
+  if session.editor:is_open() then
+    session.editor:focus()
+    return
+  end
+  local root = context.root
+  local path = context.file and context.file.path
+  self:query(root, function(callback)
+    return jj.full_description(root, "@", callback)
+  end, function(description, err)
+    if err then
+      vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
+      return
+    end
+    if not edit_description then
+      self:mutate({ root = root }, jj.commit(path, description), true)
+      return
+    end
+    session.editor:open({
+      change_id = "@",
+      contents = description,
+      name = "majjit://commit",
+      startinsert = description == "",
+      on_submit = function(value, complete)
+        self:_finish_editor_mutation(root, jj.commit(path, value), {}, complete)
+      end,
+    })
+  end)
+end
+
+local function combined_description(destination, source)
+  return "JJ: Description from the destination commit:\n"
+    .. destination
+    .. "\nJJ: Description from source commit:\n"
+    .. source
+end
+
+function Workflow:squash_edit(context, destination)
+  local session = self.session
+  if session.editor:is_open() then
+    session.editor:focus()
+    return
+  end
+  local root = context.root
+  local source = context.source or context
+  local source_id = source.commit.change_id
+  local path = source.file and source.file.path
+
+  self:_start_operation(function(operation)
+    local destination_id = destination and destination.change_id
+    local destination_description
+    if destination_id then
+      local err
+      destination_description, err = operation:await(function(callback)
+        return jj.full_description(root, destination_id, callback)
+      end)
+      if err then
+        return nil, err
+      end
+    else
+      local parents, err = operation:await(function(callback)
+        return jj.parent_descriptions(root, source_id, callback)
+      end)
+      if err then
+        return nil, err
+      end
+      if #parents ~= 1 then
+        return nil, "Squashing into a parent requires exactly one parent"
+      end
+      destination_id = parents[1].change_id
+      destination_description = parents[1].description
+    end
+    local source_description, err = operation:await(function(callback)
+      return jj.full_description(root, source_id, callback)
+    end)
+    if err then
+      return nil, err
+    end
+    return {
+      destination = destination_id,
+      contents = combined_description(destination_description, source_description),
+    }
+  end, function(result, err)
+    if err then
+      vim.notify(err, vim.log.levels.ERROR, { title = "Majjit" })
+      return
+    end
+    session.editor:open({
+      change_id = source_id,
+      contents = result.contents,
+      name = "majjit://squash/" .. source_id .. "/" .. result.destination,
+      startinsert = false,
+      on_submit = function(value, complete)
+        local command
+        if destination then
+          command = jj.squash_into(source_id, result.destination, path, false, value)
+        else
+          command = jj.squash(source_id, path, false, value)
+        end
+        self:_finish_editor_mutation(root, command, { change_id = result.destination }, complete)
+      end,
+    })
+  end)
+end
+
 function Workflow:describe_inline(context)
   local root = context.root
   local change_id = context.commit.change_id
@@ -466,7 +626,8 @@ function Workflow:describe_in_editor(context)
   end)
 end
 
-function Workflow:_select_repository_value(root, prompt, query, callback)
+function Workflow:_select_repository_value(root, prompt, query, callback, opts)
+  opts = opts or {}
   local session = self.session
   local append_output = false
   session.prompt:select({
@@ -480,7 +641,7 @@ function Workflow:_select_repository_value(root, prompt, query, callback)
           if not command_succeeded(recovery) then
             return { recovered = true }, mutation_error(recovery)
           end
-          next_state, err = repository.load(operation, root)
+          next_state, err = repository.load(operation, root, self.session.revset)
           if err then
             return { recovered = true }, err
           end
@@ -488,6 +649,9 @@ function Workflow:_select_repository_value(root, prompt, query, callback)
         end
         if err then
           return { recovered = append_output, state = next_state }, err
+        end
+        if opts.manual then
+          items[#items + 1] = prompt_module.manual_entry(opts.manual)
         end
         return { items = items, recovered = append_output, state = next_state }
       end, function(result, err)
@@ -507,10 +671,17 @@ function Workflow:_select_repository_value(root, prompt, query, callback)
         on_load(result.items, nil)
       end)
     end,
+    allow_custom = opts.allow_custom,
+    format_item = opts.format_item,
+    input_prompt = opts.input_prompt,
     prompt = prompt,
-  }, function(value)
-    callback(value, append_output)
+  }, function(value, selection_err)
+    callback(value, append_output, selection_err)
   end)
+end
+
+function Workflow:select_values(root, prompt, query, callback, opts)
+  return self:_select_repository_value(root, prompt, query, callback, opts)
 end
 
 function Workflow:select_revision_target(context, prompt, callback)

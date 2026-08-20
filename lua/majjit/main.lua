@@ -92,7 +92,6 @@ function M.open()
   vim.bo[buffer].buftype = "nofile"
   vim.bo[buffer].filetype = "majjit"
   vim.bo[buffer].swapfile = false
-  vim.wo.cursorline = true
   vim.wo.number = false
   vim.wo.relativenumber = false
 
@@ -140,6 +139,13 @@ function M.open()
       return session.view:get_window()
     end,
     overlay = session.output,
+    set_source = function(source)
+      if source then
+        session.view:set_source(source)
+      else
+        session.view:clear_source()
+      end
+    end,
     tree = command_tree,
   })
 

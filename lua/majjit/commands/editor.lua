@@ -99,7 +99,7 @@ function Editor:open(opts)
   self.tab = vim.api.nvim_get_current_tabpage()
 
   local lines, endofline = description_lines(append_instructions(opts.contents))
-  vim.api.nvim_buf_set_name(buffer, "majjit://describe/" .. opts.change_id)
+  vim.api.nvim_buf_set_name(buffer, opts.name or "majjit://describe/" .. opts.change_id)
   vim.bo[buffer].bufhidden = "wipe"
   vim.bo[buffer].buftype = "acwrite"
   vim.bo[buffer].swapfile = false

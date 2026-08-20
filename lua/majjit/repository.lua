@@ -5,8 +5,10 @@ local log = require("majjit.log")
 local M = {}
 
 local DEFAULT_REVSET = "present(@) | ancestors(immutable_heads().., 32) | remote_bookmarks() | root()"
+M.DEFAULT_REVSET = DEFAULT_REVSET
 
-function M.load(operation, cwd)
+function M.load(operation, cwd, revset)
+  revset = revset or DEFAULT_REVSET
   local root, root_err = operation:await(function(callback)
     return jj.workspace_root(cwd, callback)
   end)
@@ -15,7 +17,7 @@ function M.load(operation, cwd)
   end
 
   local revision_log, log_err = operation:await(function(callback)
-    return log.load(root, DEFAULT_REVSET, callback)
+    return log.load(root, revset, callback)
   end)
   if log_err then
     return nil, log_err
@@ -37,7 +39,7 @@ function M.load(operation, cwd)
 
   return {
     root = root,
-    revset = DEFAULT_REVSET,
+    revset = revset,
     log = revision_log,
   }, nil
 end

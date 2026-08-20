@@ -2,6 +2,11 @@ local M = {}
 
 local Prompt = {}
 Prompt.__index = Prompt
+local manual_entry = {}
+
+function M.manual_entry(label)
+  return setmetatable({ label = label }, manual_entry)
+end
 
 function M.new(opts)
   return setmetatable({
@@ -120,12 +125,30 @@ function Prompt:select(opts, callback)
       return
     end
     if #items == 0 then
+      if opts.allow_custom == false then
+        self:_restore(request)
+        self.active = nil
+        callback(nil, "No candidates available")
+        return
+      end
       self:_input(request, { prompt = opts.input_prompt or opts.prompt }, callback)
       return
     end
 
+    local format_item = opts.format_item
+    for _, item in ipairs(items) do
+      if getmetatable(item) == manual_entry then
+        format_item = function(value)
+          if getmetatable(value) == manual_entry then
+            return value.label
+          end
+          return opts.format_item and opts.format_item(value) or tostring(value)
+        end
+        break
+      end
+    end
     local ok, select_err = pcall(vim.ui.select, items, {
-      format_item = opts.format_item,
+      format_item = format_item,
       prompt = opts.prompt,
     }, function(selected)
       if not self:_valid(request) then
@@ -134,6 +157,10 @@ function Prompt:select(opts, callback)
       if not selected then
         self:_restore(request)
         self.active = nil
+        return
+      end
+      if getmetatable(selected) == manual_entry then
+        self:_input(request, { prompt = opts.input_prompt or opts.prompt }, callback)
         return
       end
       if not self:_can_complete(request) then
