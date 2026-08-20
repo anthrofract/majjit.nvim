@@ -1,9 +1,6 @@
 local M = {}
 
-local ansi = require("baleia").setup({
-  async = false,
-  name = "MajjitAnsi",
-})
+local ansi = require("majjit.ansi")
 local active_session
 local actions = require("majjit.commands.actions")
 local command_catalog = require("majjit.commands.catalog")
