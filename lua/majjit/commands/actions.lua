@@ -628,8 +628,14 @@ function M.new(workflow, close)
   end
 
   actions["view.close"] = close
+  actions["view.next_item"] = function()
+    workflow:move_item(1, vim.v.count1)
+  end
   actions["view.open"] = function()
     workflow:open_file()
+  end
+  actions["view.previous_item"] = function()
+    workflow:move_item(-1, vim.v.count1)
   end
   actions["view.refresh"] = function()
     workflow:refresh()

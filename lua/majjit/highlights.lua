@@ -47,6 +47,7 @@ end
 local links = {
   MajjitAnsiBold = "Bold",
   MajjitAnsiUnderline = "Underlined",
+  MajjitCursorLine = "CursorLine",
   MajjitDecoration = "Comment",
   MajjitFile = "Directory",
   MajjitLabel = "Function",

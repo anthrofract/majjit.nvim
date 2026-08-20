@@ -73,6 +73,24 @@ local commands = {
     label = "File action",
     requires = { "file" },
   },
+  {
+    kind = "action",
+    id = "view.next_item",
+    keys = { "j", "<Down>" },
+    hidden = true,
+    label = "Next item",
+    available_during_session = true,
+    preserve_session = true,
+  },
+  {
+    kind = "action",
+    id = "view.previous_item",
+    keys = { "k", "<Up>" },
+    hidden = true,
+    label = "Previous item",
+    available_during_session = true,
+    preserve_session = true,
+  },
 }
 
 local tree = tree_module.compile(catalog(commands))
@@ -139,8 +157,10 @@ local buffer = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_win_set_buf(0, buffer)
 local original_d = function() end
 local original_escape = function() end
+local original_j = function() end
 vim.keymap.set("n", "d", original_d, { buffer = buffer })
 vim.keymap.set("n", "<Esc>", original_escape, { buffer = buffer })
+vim.keymap.set("n", "j", original_j, { buffer = buffer })
 local context = {
   capabilities = { commit = true },
 }
@@ -153,8 +173,14 @@ local command_session = session_module.attach({
     ["view.file"] = function()
       error("Unavailable action ran")
     end,
+    ["view.next_item"] = function()
+      calls[#calls + 1] = { id = "view.next_item" }
+    end,
     ["view.other"] = function()
       calls[#calls + 1] = { id = "view.other" }
+    end,
+    ["view.previous_item"] = function()
+      calls[#calls + 1] = { id = "view.previous_item" }
     end,
     ["view.preserve"] = function()
       calls[#calls + 1] = { id = "view.preserve" }
@@ -171,7 +197,10 @@ local command_session = session_module.attach({
 })
 
 assert(vim.fn.maparg("d", "n", false, true).buffer == 1)
-assert(vim.fn.maparg("j", "n", false, true).buffer ~= 1)
+assert(vim.fn.maparg("j", "n", false, true).callback ~= original_j)
+assert(vim.fn.maparg("<Down>", "n", false, true).buffer == 1)
+assert(vim.fn.maparg("k", "n", false, true).buffer == 1)
+assert(vim.fn.maparg("<Up>", "n", false, true).buffer == 1)
 
 command_session:press("?")
 assert(command_session.help:is_open())
@@ -182,6 +211,9 @@ assert(vim.fn.maparg("<Esc>", "n", false, true).callback == original_escape)
 command_session:press("d")
 assert(command_session.active.id == "describe")
 assert(command_session.help:is_open())
+command_session:press("j")
+assert(command_session.active.id == "describe")
+assert(calls[#calls].id == "view.next_item")
 command_session:press("y")
 assert(command_session.active.id == "describe")
 local help_buffer = command_session.help.buffer
@@ -204,6 +236,10 @@ assert(#calls == call_count)
 
 command_session:detach()
 assert(vim.fn.maparg("d", "n", false, true).callback == original_d)
+assert(vim.fn.maparg("j", "n", false, true).callback == original_j)
+assert(vim.fn.maparg("<Down>", "n", false, true).buffer ~= 1)
+assert(vim.fn.maparg("k", "n", false, true).buffer ~= 1)
+assert(vim.fn.maparg("<Up>", "n", false, true).buffer ~= 1)
 
 local layout_entries = {}
 for i = 1, 18 do

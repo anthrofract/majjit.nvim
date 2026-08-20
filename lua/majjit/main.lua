@@ -120,6 +120,12 @@ function M.open()
       reset(session)
     end,
   })
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    buffer = buffer,
+    callback = function()
+      session.view:highlight_cursor()
+    end,
+  })
 
   session.view:set_lines({ "Loading..." })
 

@@ -122,6 +122,7 @@ function M.new(buffer, ansi)
   return setmetatable({
     ansi = ansi,
     buffer = buffer,
+    cursor_namespace = vim.api.nvim_create_namespace("majjit-cursor"),
     ignore_immutable = false,
     namespace = vim.api.nvim_create_namespace("majjit"),
     source = nil,
@@ -186,6 +187,66 @@ function View:entry_at_cursor(window)
   return log.entry_at_line(self.state.log, cursor[1] - HEADER_LINE_COUNT)
 end
 
+function View:highlight_cursor(window)
+  if not self.buffer or not vim.api.nvim_buf_is_valid(self.buffer) then
+    return
+  end
+  vim.api.nvim_buf_clear_namespace(self.buffer, self.cursor_namespace, 0, -1)
+
+  window = window or self:get_window()
+  if not self.state or not window then
+    return
+  end
+  local cursor = vim.api.nvim_win_get_cursor(window)
+  local entry = log.entry_at_line(self.state.log, cursor[1] - HEADER_LINE_COUNT)
+  if not entry then
+    return
+  end
+
+  local first_row = cursor[1] - 1
+  local line_count = 1
+  if entry.kind == "commit" and #entry.lines == 2 then
+    first_row = entry.line + HEADER_LINE_COUNT - 1
+    line_count = 2
+  end
+  for row = first_row, first_row + line_count - 1 do
+    vim.api.nvim_buf_set_extmark(self.buffer, self.cursor_namespace, row, 0, {
+      line_hl_group = "MajjitCursorLine",
+      priority = 200,
+    })
+  end
+end
+
+function View:move_item(direction, count, window)
+  window = window or self:get_window()
+  if not self.state or not window then
+    return false
+  end
+
+  count = math.max(1, count or 1)
+  local cursor = vim.api.nvim_win_get_cursor(window)
+  local _, _, index = log.entry_at_line(self.state.log, cursor[1] - HEADER_LINE_COUNT)
+  if not index then
+    vim.api.nvim_win_call(window, function()
+      vim.cmd(("normal! %d%s"):format(count, direction > 0 and "j" or "k"))
+    end)
+    self:highlight_cursor(window)
+    return true
+  end
+
+  local entries = self.state.log.entries
+  local target_index = math.max(1, math.min(index + direction * count, #entries))
+  if target_index == index then
+    self:highlight_cursor(window)
+    return true
+  end
+  local row = entries[target_index].line + HEADER_LINE_COUNT
+  local line = vim.api.nvim_buf_get_lines(self.buffer, row - 1, row, false)[1]
+  vim.api.nvim_win_set_cursor(window, { row, math.min(cursor[2], #line) })
+  self:highlight_cursor(window)
+  return true
+end
+
 function View:focus_commit(change_id)
   local window = self:get_window()
   local commit = self.state and log.find_commit(self.state.log, change_id)
@@ -193,6 +254,7 @@ function View:focus_commit(change_id)
     return false
   end
   vim.api.nvim_win_set_cursor(window, { commit.line + HEADER_LINE_COUNT, 0 })
+  self:highlight_cursor(window)
   return true
 end
 
@@ -247,8 +309,9 @@ function View:render(next_state, selection, saved_view)
   highlight_header(self, next_state.revset)
   highlight_log(self, next_state.log)
   highlight_source(self, next_state.log)
-  restore_selection(self, next_state, selection, saved_view)
   self.state = next_state
+  restore_selection(self, next_state, selection, saved_view)
+  self:highlight_cursor()
 end
 
 function View:set_source(source)

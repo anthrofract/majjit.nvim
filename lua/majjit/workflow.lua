@@ -176,6 +176,10 @@ function Workflow:load(selection)
   end)
 end
 
+function Workflow:move_item(direction, count)
+  return self.session.view:move_item(direction, count)
+end
+
 function Workflow:refresh()
   local session = self.session
   if not session.operation and vim.api.nvim_buf_is_valid(session.view.buffer) then
