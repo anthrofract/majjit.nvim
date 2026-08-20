@@ -3,6 +3,7 @@ local output_module = require("majjit.commands.output")
 local prompt_module = require("majjit.commands.prompt")
 local session_module = require("majjit.commands.session")
 local tree_module = require("majjit.commands.tree")
+local fzf_lua = require("fzf-lua")
 
 tree_module.compile(require("majjit.commands.catalog"))
 local function expect_error(pattern, callback)
@@ -305,24 +306,90 @@ local prompt = prompt_module.new({
   output = prompt_output,
   update_mappings = function() end,
 })
-local original_select = vim.ui.select
 local original_input = vim.ui.input
+local original_fzf_exec = fzf_lua.fzf_exec
+local original_fzf_close = fzf_lua.win.close
 local selected_value
-vim.ui.select = function(items, opts, callback)
-  assert(vim.deep_equal(items, { "candidate" }))
-  assert(opts.prompt == "Select: ")
-  callback(items[1])
+local picker_entries
+local picker_opts
+fzf_lua.fzf_exec = function(entries, opts)
+  picker_entries = entries
+  picker_opts = opts
+  opts.winopts.on_create({ bufnr = 42 })
 end
+local first_candidate = { label = "candidate" }
+local second_candidate = { label = "candidate" }
+prompt:select({
+  load = function(callback)
+    callback({ first_candidate, second_candidate }, nil)
+  end,
+  prompt = "Select: ",
+  format_item = function(item)
+    return item.label
+  end,
+}, function(value)
+  selected_value = value
+end)
+assert(vim.deep_equal(picker_entries, { "1\tcandidate", "2\tcandidate" }))
+assert(picker_opts.prompt == "Select > ")
+picker_opts.winopts.on_close()
+picker_opts.actions.default({ picker_entries[2] })
+assert(selected_value == second_candidate)
+assert(not prompt_output.open)
+vim.wait(20)
+assert(prompt.active == nil)
+
+local function cancel_picker(action)
+  prompt_output.open = true
+  prompt:select({
+    load = function(callback)
+      callback({ "candidate" }, nil)
+    end,
+    prompt = "Select: ",
+  }, function()
+    error("Cancelled picker ran")
+  end)
+  assert(prompt.active)
+  picker_opts.actions[action]()
+  assert(prompt.active == nil)
+  assert(prompt_output.open)
+end
+
+cancel_picker("esc")
+cancel_picker("ctrl-c")
+cancel_picker("ctrl-q")
+
+prompt_output.open = true
 prompt:select({
   load = function(callback)
     callback({ "candidate" }, nil)
   end,
   prompt = "Select: ",
-}, function(value)
-  selected_value = value
+}, function()
+  error("Closed picker ran")
 end)
-assert(selected_value == "candidate")
-assert(not prompt_output.open)
+picker_opts.winopts.on_close()
+assert(vim.wait(20, function()
+  return prompt.active == nil
+end))
+assert(prompt_output.open)
+
+local closed_picker
+fzf_lua.win.close = function(buffer)
+  closed_picker = buffer
+end
+prompt_output.open = true
+prompt:select({
+  load = function(callback)
+    callback({ "candidate" }, nil)
+  end,
+  prompt = "Select: ",
+}, function()
+  error("Cancelled picker ran")
+end)
+prompt:cancel()
+assert(closed_picker == 42)
+assert(prompt.active == nil)
 
 prompt_output.open = true
 local input_value
@@ -343,6 +410,7 @@ assert(input_value == "manual")
 assert(not prompt_output.open)
 
 prompt_output.open = true
+prompt_output.show_count = 0
 vim.ui.input = function(_, callback)
   callback(nil)
 end
@@ -372,8 +440,9 @@ blocked_prompt:input({ prompt = "Blocked: " }, function() end)
 assert(not input_called)
 assert(prompt_output.open)
 vim.notify = original_notify
-vim.ui.select = original_select
 vim.ui.input = original_input
+fzf_lua.fzf_exec = original_fzf_exec
+fzf_lua.win.close = original_fzf_close
 
 local leave_buffer = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_win_set_buf(0, leave_buffer)

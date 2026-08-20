@@ -1,4 +1,5 @@
 local M = {}
+local fzf_lua = require("fzf-lua")
 
 local Prompt = {}
 Prompt.__index = Prompt
@@ -74,6 +75,15 @@ function Prompt:_error(request, err)
   vim.notify(tostring(err), vim.log.levels.ERROR, { title = "Majjit" })
 end
 
+function Prompt:_cancel(request)
+  if self.active ~= request then
+    return
+  end
+  request.picker_open = false
+  self:_restore(request)
+  self.active = nil
+end
+
 function Prompt:_input(request, opts, callback)
   local ok, input_err = pcall(vim.ui.input, {
     default = opts.default,
@@ -147,19 +157,30 @@ function Prompt:select(opts, callback)
         break
       end
     end
-    local ok, select_err = pcall(vim.ui.select, items, {
-      format_item = format_item,
-      prompt = opts.prompt,
-    }, function(selected)
+    local entries = {}
+    for index, item in ipairs(items) do
+      entries[index] = string.format("%d\t%s", index, format_item and format_item(item) or tostring(item))
+    end
+
+    local function cancel()
       if not self:_valid(request) then
         return
       end
-      if not selected then
-        self:_restore(request)
-        self.active = nil
+      self:_cancel(request)
+    end
+
+    local function select(selected)
+      if not self:_valid(request) then
         return
       end
-      if getmetatable(selected) == manual_entry then
+      request.picker_open = false
+      local index = selected and selected[1] and tonumber(selected[1]:match("^(%d+)\t"))
+      local selected_item = index and items[index]
+      if not selected_item then
+        self:_error(request, "fzf-lua returned an invalid selection")
+        return
+      end
+      if getmetatable(selected_item) == manual_entry then
         self:_input(request, { prompt = opts.input_prompt or opts.prompt }, callback)
         return
       end
@@ -168,8 +189,46 @@ function Prompt:select(opts, callback)
       end
 
       self.active = nil
-      callback(selected)
-    end)
+      callback(selected_item)
+    end
+
+    request.picker_open = true
+    local ok, select_err = pcall(fzf_lua.fzf_exec, entries, {
+      actions = {
+        ["default"] = select,
+        ["esc"] = cancel,
+        ["ctrl-c"] = cancel,
+        ["ctrl-q"] = cancel,
+      },
+      fzf_opts = {
+        ["--delimiter"] = "\t",
+        ["--no-multi"] = "",
+        ["--with-nth"] = "2..",
+      },
+      fzf_colors = true,
+      hls = {
+        border = "Comment",
+        fzf = {
+          separator = "Comment",
+        },
+      },
+      profile = "ivy",
+      prompt = opts.prompt:gsub(":%s*$", "") .. " > ",
+      winopts = {
+        border = { "─", "─", "─", "", "", "", "", "" },
+        height = 0.3,
+        on_close = function()
+          vim.schedule(function()
+            if self:_valid(request) and request.picker_open then
+              self:_cancel(request)
+            end
+          end)
+        end,
+        on_create = function(event)
+          request.picker_buffer = event.bufnr
+        end,
+      },
+    })
     if not ok then
       self:_error(request, select_err)
     end
@@ -187,6 +246,9 @@ function Prompt:cancel()
   self.active = nil
   if request and request.process then
     pcall(request.process.kill, request.process, 15)
+  end
+  if request and request.picker_buffer then
+    pcall(fzf_lua.win.close, request.picker_buffer)
   end
 end
 
